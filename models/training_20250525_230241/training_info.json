@@ -1,0 +1,9 @@
+{
+  "num_epochs": 3,
+  "batch_size": 4,
+  "device": "cpu",
+  "best_loss": 0.9836241404215494,
+  "final_loss": 1.0021426876386006,
+  "model_path": "/Users/kim/Desktop/2525-capston/tumblr/models/training_20250525_230241/best_model.pt",
+  "timestamp": "20250525_230241"
+}

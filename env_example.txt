@@ -1,0 +1,43 @@
+# Building Damage Analysis LLM System Environment Variables
+
+# OpenAI API Key (optional, for enhanced language processing)
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Hugging Face Token (optional, for accessing private models)
+HUGGINGFACE_TOKEN=your_huggingface_token_here
+
+# Model Configuration
+MODEL_DEVICE=cpu  # or cuda if GPU is available
+MODEL_CACHE_DIR=./cache/models
+
+# Training Configuration
+TRAINING_BATCH_SIZE=16
+TRAINING_EPOCHS=10
+TRAINING_LEARNING_RATE=3e-5
+
+# Streamlit Configuration
+STREAMLIT_PORT=8501
+STREAMLIT_ADDRESS=0.0.0.0
+STREAMLIT_MAX_UPLOAD_SIZE=10485760  # 10MB in bytes
+
+# Database Configuration (for production)
+# DATABASE_URL=postgresql://user:password@localhost/building_damage_db
+# REDIS_URL=redis://localhost:6379
+
+# Logging Configuration
+LOG_LEVEL=INFO
+LOG_FILE=logs/app.log
+
+# Security (for production)
+# SECRET_KEY=your_secret_key_here
+# ALLOWED_HOSTS=localhost,127.0.0.1,your-domain.com
+
+# Storage Configuration
+UPLOAD_DIR=./cache/uploads
+RESULTS_DIR=./cache/results
+MODELS_DIR=./models
+
+# Performance Tuning
+MAX_WORKERS=4
+TIMEOUT_SECONDS=300
+MEMORY_LIMIT_GB=8 

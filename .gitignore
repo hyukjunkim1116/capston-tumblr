@@ -1,0 +1,125 @@
+# 🚫 GitHub에 올리지 말아야 할 파일들
+
+# ===== 대용량 AI 모델 파일 (10GB) =====
+# 학습된 PyTorch 모델 파일들 (각 2.5GB)
+models/*/best_model.pt
+models/*/final_model.pt
+models/*/model_*.pt
+models/*/checkpoint_*.pt
+*.pt
+*.pth
+*.ckpt
+
+# ===== 벡터스토어 데이터베이스 =====
+# ChromaDB 파일들 (34MB)
+standard/chroma.sqlite3
+standard/*/
+!standard/*.xlsx
+!standard/*.pdf
+!standard/*.hwp
+!standard/*.hwpx
+
+# ===== 캐시 및 임시 파일 =====
+cache/
+uploads/
+results/
+temp/
+tmp/
+
+# ===== Python 관련 =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ===== 가상환경 =====
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.conda/
+
+# ===== 환경 변수 및 설정 =====
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+config.ini
+secrets.json
+
+# ===== 로그 파일 =====
+logs/
+*.log
+*.log.*
+log/
+
+# ===== IDE 및 에디터 =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.cursor/
+
+# ===== 운영체제 =====
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ===== Jupyter Notebook =====
+.ipynb_checkpoints
+*.ipynb
+
+# ===== 데이터 파일 (선택적) =====
+# 대용량 학습 데이터는 제외 (필요시 주석 해제)
+# learning_pictures/
+# learning_texts.xlsx
+
+# ===== 기타 =====
+*.bak
+*.backup
+*.orig
+*.rej
+.coverage
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ===== Git 관련 =====
+.git/
+.gitattributes
+
+# ===== 배포 관련 =====
+.vercel
+.netlify
+.railway
+
+# ===== 문서 임시 파일 =====
+~$*.docx
+~$*.xlsx
+~$*.pptx 
