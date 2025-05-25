@@ -150,7 +150,7 @@ def check_files():
     files = [
         ("streamlit_app.py", "메인 애플리케이션"),
         ("requirements.txt", "패키지 의존성"),
-        ("vector_store.py", "벡터스토어 모듈"),
+        ("vector_store_faiss.py", "FAISS 벡터스토어 모듈"),
         ("config.py", "설정 파일"),
         (".streamlit/config.toml", "Streamlit 설정"),
         ("standard/", "표준 데이터 (디렉토리)"),

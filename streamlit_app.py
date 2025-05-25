@@ -3,7 +3,7 @@ Simple ChatGPT-style Streamlit web application for building damage analysis
 """
 
 import streamlit as st
-import os
+
 from datetime import datetime
 from pathlib import Path
 import logging
@@ -12,33 +12,47 @@ from typing import Dict, Any
 # Import the new simple UI
 from ui.ui_components import render_simple_chatgpt_ui
 
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 # Import our analysis modules
 try:
     from langchain_integration import analyze_building_damage, DamageAnalysisOutput
     from config import DAMAGE_CATEGORIES, CACHE_DIR, LOGS_DIR
     from models import BuildingDamageAnalysisModel
-    from vector_store import create_vector_store
+
+    # FAISS Vector store 직접 사용
+    try:
+        from vector_store_faiss import create_faiss_vector_store
+
+        VECTOR_STORE_AVAILABLE = True
+        logger.info("FAISS vector store available")
+    except Exception as ve:
+        logger.warning(f"FAISS vector store not available: {ve}")
+        VECTOR_STORE_AVAILABLE = False
+
+        def create_faiss_vector_store():
+            """Fallback vector store function"""
+            logger.warning("Using fallback vector store")
+            return None
 
     MODULES_LOADED = True
 except ImportError as e:
     st.error(f"모듈 로딩 오류: {e}")
     st.error("필요한 모듈을 찾을 수 없습니다. 개발자에게 문의하세요.")
     MODULES_LOADED = False
+    VECTOR_STORE_AVAILABLE = False
     # Fallback values
     DAMAGE_CATEGORIES = {}
     CACHE_DIR = Path("./cache")
     LOGS_DIR = Path("./logs")
 
-    def create_vector_store():
+    def create_faiss_vector_store():
         return None
 
     def analyze_building_damage(*args, **kwargs):
         return {"error": "분석 모듈을 사용할 수 없습니다."}
 
-
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Create directories
 UPLOAD_DIR = CACHE_DIR / "uploads"
@@ -67,15 +81,19 @@ def analyze_damage_with_ai(image_path: str, area: float, user_message: str) -> s
         return "죄송합니다. 분석 모듈을 사용할 수 없습니다. 개발자에게 문의하세요."
 
     try:
-        # Initialize vector store if not exists
+        # Initialize vector store if not exists and available
         if "vector_store" not in st.session_state:
-            with st.spinner("표준 데이터베이스를 로딩하고 있습니다..."):
-                try:
-                    st.session_state.vector_store = create_vector_store()
-                    logger.info("Vector store initialized successfully")
-                except Exception as e:
-                    logger.error(f"Failed to initialize vector store: {e}")
-                    st.session_state.vector_store = None
+            if VECTOR_STORE_AVAILABLE:
+                with st.spinner("표준 데이터베이스를 로딩하고 있습니다..."):
+                    try:
+                        st.session_state.vector_store = create_faiss_vector_store()
+                        logger.info("Vector store initialized successfully")
+                    except Exception as e:
+                        logger.error(f"Failed to initialize vector store: {e}")
+                        st.session_state.vector_store = None
+            else:
+                logger.warning("Vector store not available, using fallback mode")
+                st.session_state.vector_store = None
 
         # Perform damage analysis
         with st.spinner("AI가 건물 피해를 분석하고 있습니다..."):

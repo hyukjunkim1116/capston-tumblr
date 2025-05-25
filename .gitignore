@@ -11,13 +11,16 @@ models/*/checkpoint_*.pt
 *.ckpt
 
 # ===== 벡터스토어 데이터베이스 =====
-# ChromaDB 파일들 (34MB)
-standard/chroma.sqlite3
-standard/*/
+# FAISS 인덱스는 포함 (배포 환경에서 사용)
+!standard/faiss_index/
+!standard/metadata.json
+
+# 표준 데이터 파일들은 포함
 !standard/*.xlsx
 !standard/*.pdf
 !standard/*.hwp
 !standard/*.hwpx
+!standard/*/
 
 # ===== 캐시 및 임시 파일 =====
 cache/
