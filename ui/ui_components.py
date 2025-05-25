@@ -221,7 +221,7 @@ def render_simple_chatgpt_ui():
                 return
 
             completion = client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-4o-mini",
                 messages=api_messages,
             )
             response = completion.choices[0].message.content
