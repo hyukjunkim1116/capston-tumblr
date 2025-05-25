@@ -1,0 +1,23 @@
+[global]
+developmentMode = false
+
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = false
+fileWatcherType = "none"
+runOnSave = false
+maxUploadSize = 200
+maxMessageSize = 200
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+primaryColor = "#667eea"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f2f6"
+textColor = "#262730"
+
+[logger]
+level = "warning" 

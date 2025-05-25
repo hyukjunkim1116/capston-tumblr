@@ -66,6 +66,7 @@ venv.bak/
 .env.production.local
 config.ini
 secrets.json
+secrets.toml
 
 # ===== 로그 파일 =====
 logs/
