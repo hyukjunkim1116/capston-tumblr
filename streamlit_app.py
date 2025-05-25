@@ -3,6 +3,11 @@ Simple ChatGPT-style Streamlit web application for building damage analysis
 """
 
 import streamlit as st
+import os
+
+# Suppress HuggingFace warnings
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +20,12 @@ from ui.ui_components import render_simple_chatgpt_ui
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Reduce verbosity of external libraries
+logging.getLogger("faiss").setLevel(logging.WARNING)
+logging.getLogger("transformers").setLevel(logging.WARNING)
+logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
+
 # Import our analysis modules
 try:
     from langchain_integration import analyze_building_damage, DamageAnalysisOutput

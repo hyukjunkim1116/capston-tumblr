@@ -10,8 +10,6 @@ from transformers import (
     CLIPProcessor,
     AutoTokenizer,
     AutoModel,
-    BlipProcessor,
-    BlipForConditionalGeneration,
 )
 from typing import Dict, List, Optional, Tuple, Any
 import logging
@@ -33,7 +31,14 @@ class VisionEncoder(nn.Module):
 
         self.model_name = model_name
         self.vision_model = CLIPVisionModel.from_pretrained(model_name)
-        self.processor = CLIPProcessor.from_pretrained(model_name)
+
+        # Use fast processor to avoid warnings
+        try:
+            self.processor = CLIPProcessor.from_pretrained(model_name, use_fast=True)
+        except Exception:
+            # Fallback to slow processor if fast is not available
+            self.processor = CLIPProcessor.from_pretrained(model_name)
+            logger.warning(f"Using slow processor for {model_name}")
 
         # Freeze vision model initially
         for param in self.vision_model.parameters():

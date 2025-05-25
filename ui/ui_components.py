@@ -268,11 +268,11 @@ def render_simple_chatgpt_ui():
             """
         <div style="
             text-align: center; 
-            margin-top: -1rem; 
+            margin-top: -3rem; 
             margin-bottom: 2rem;
         ">
             <h1 style="
-                font-size: 2.8rem !important;
+                font-size: 6.2rem !important;
                 font-weight: 800 !important;
                 color: #1f2937 !important;
                 margin: 0 !important;
@@ -288,29 +288,6 @@ def render_simple_chatgpt_ui():
         """,
             unsafe_allow_html=True,
         )
-
-        # 공종명 안내 모달 버튼
-        if st.button("📋 공종명 대체 적용 안내", use_container_width=True):
-            show_construction_guide()
-
-        # Vector Store 상태 표시
-        if "vector_store" in st.session_state and st.session_state.vector_store:
-            if (
-                hasattr(st.session_state.vector_store, "vectorstore")
-                and st.session_state.vector_store.vectorstore
-            ):
-                st.markdown("### 🗄️ 데이터베이스 상태")
-                st.success("✅ FAISS 연결됨")
-                st.info("💡 배포 최적화 모드")
-
-                # 인덱스 정보 표시
-                if hasattr(st.session_state.vector_store, "documents_metadata"):
-                    doc_count = len(st.session_state.vector_store.documents_metadata)
-                    st.caption(f"📊 {doc_count:,}개 문서 인덱싱됨")
-            else:
-                st.markdown("### 🗄️ 데이터베이스 상태")
-                st.warning("⚠️ 기본 모드 (제한된 기능)")
-                st.caption("Vector store 초기화 실패")
 
         st.markdown("### 📋 사용법")
         st.markdown(
@@ -331,10 +308,8 @@ def render_simple_chatgpt_ui():
         - 정확한 분석을 위해 면적을 정확히 입력해주세요
         """
         )
-
-        # 대화 초기화 버튼
-        if st.button("🗑️ 대화 초기화"):
-            st.session_state.messages = []
-            st.rerun()
+        # 공종명 안내 모달 버튼
+        if st.button("📋 공종명 대체 적용 안내", use_container_width=True):
+            show_construction_guide()
 
     return user_message, uploaded_file, area_input, send_button

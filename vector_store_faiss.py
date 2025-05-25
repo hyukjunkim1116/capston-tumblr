@@ -58,13 +58,22 @@ class FAISSStandardDataVectorStore:
         """Initialize embeddings with Streamlit caching"""
         try:
             logger.info("Initializing embeddings model...")
-            embeddings = HuggingFaceEmbeddings(
-                model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-                model_kwargs={"device": "cpu"},  # Force CPU for deployment
-                encode_kwargs={
-                    "batch_size": 16
-                },  # Remove show_progress_bar to avoid conflict
-            )
+
+            # Suppress HuggingFace warnings during initialization
+            import warnings
+
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=FutureWarning)
+                warnings.filterwarnings("ignore", message=".*use_fast.*")
+
+                embeddings = HuggingFaceEmbeddings(
+                    model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+                    model_kwargs={"device": "cpu"},  # Force CPU for deployment
+                    encode_kwargs={
+                        "batch_size": 16
+                    },  # Remove show_progress_bar to avoid conflict
+                )
+
             logger.info("✅ Embeddings model loaded successfully")
             return embeddings
         except Exception as e:
