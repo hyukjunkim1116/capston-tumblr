@@ -112,7 +112,7 @@ def render_simple_chatgpt_ui():
     # 채팅 메시지 표시
     for message in st.session_state.messages:
         if message["role"] == "user":
-            with st.chat_message("user", avatar="👤"):
+            with st.chat_message("user", avatar=None):
                 st.write(message["content"])
 
                 # 이미지가 있으면 표시
@@ -122,41 +122,29 @@ def render_simple_chatgpt_ui():
                         st.image(
                             message["image"],
                             caption="업로드된 이미지",
-                            use_column_width=True,
+                            use_container_width=True,
                         )
-
-                    # 파일 정보를 더 간결하게 표시
-                    st.markdown(
-                        f"""
-                    📊 **분석 정보** | 📁 {message['image'].name} | 📏 {message.get('image_size', 0) / 1024:.1f} KB | 📐 {message.get('area', 0)} m²
-                    """
-                    )
-
-                # 면적 정보만 있는 경우
-                elif "area" in message:
-                    st.markdown(f"📐 **분석 면적**: {message['area']} m²")
 
         else:
             response_type = message.get("response_type", "comprehensive")
-            avatar = "🏗️" if response_type == "comprehensive" else "🤖"
+            avatar = None
 
             with st.chat_message("assistant", avatar=avatar):
                 st.write(message["content"])
 
     # st.chat_input을 사용한 메시지 입력 (하단에 자동 고정됨)
-    user_message = st.chat_input(
+    user_input = st.chat_input(
         placeholder="건물 피해에 대해 무엇이든 물어보세요...",
         disabled=st.session_state.processing,
-    )
-    uploaded_file = st.file_uploader(
-        "📎 건물 피해 사진 업로드",
-        type=["jpg", "jpeg", "png", "bmp", "tiff"],
-        help="건물 피해 사진을 업로드하여 AI 분석을 받아보세요",
-        disabled=st.session_state.processing,
+        accept_file=True,
+        file_type=["jpg", "jpeg", "png", "bmp", "tiff"],
+        on_submit=None,  # 콜백 함수는 여기서 직접 처리
+        key="main_chat_input",
     )
 
+    # 별도 입력 필드들 제거하고 chat_input만 사용
     area_input = st.number_input(
-        "면적 (m²)",
+        "피해 면적 (m²)",
         min_value=0.1,
         max_value=10000.0,
         value=10.0,
@@ -164,101 +152,16 @@ def render_simple_chatgpt_ui():
         help="분석할 건물의 면적을 입력하세요",
         disabled=st.session_state.processing,
     )
-    # 업로드된 파일 미리보기
-    if uploaded_file is not None:
-        with st.expander("📷 업로드된 파일 미리보기", expanded=False):
-            col_img, col_info = st.columns([1, 2])
-            with col_img:
-                st.image(uploaded_file, width=120)
-            with col_info:
-                st.markdown(
-                    f"""
-                **파일 정보**
-                - 📁 파일명: `{uploaded_file.name}`
-                - 📏 크기: `{len(uploaded_file.getvalue()) / 1024:.1f} KB`
-                - 🏷️ 형식: `{uploaded_file.type.split('/')[-1].upper()}`
-                """
-                )
-    # 메시지 처리 로직 - st.chat_input이 리턴하는 값 처리
-    if user_message and not st.session_state.processing:
-        st.session_state.processing = True
 
-        # 사용자 메시지 데이터 구성
-        message_data = {
-            "role": "user",
-            "content": user_message,
-            "timestamp": datetime.now(),
-            "area": area_input,
-        }
-
-        # 이미지가 있으면 추가
-        if uploaded_file is not None:
-            message_data["image"] = uploaded_file
-            message_data["image_size"] = len(uploaded_file.getvalue())
-
-        st.session_state.messages.append(message_data)
-
-        # API 호출 로직
-        if uploaded_file is not None:
-            # 이미지가 있는 경우 - 자체 AI 분석 사용 (메인 앱에서 처리)
-            try:
-                # 이 부분은 메인 앱에서 처리됨
-                pass
-            except Exception as e:
-                st.error(f"이미지 분석 중 오류가 발생했습니다: {str(e)}")
-        else:
-            # 텍스트만 있는 경우 - OpenAI API 사용
-            try:
-                # OpenAI API 호출을 위한 메시지 준비
-                api_messages = []
-                for msg in st.session_state.messages[-5:]:  # 최근 5개 메시지만 사용
-                    if msg["role"] in ["user", "assistant"]:
-                        content = msg["content"]
-
-                        # 컨텍스트 정보 추가
-                        if "area" in msg:
-                            content += f"\n[피해 면적: {msg['area']} m²]"
-
-                        api_messages.append({"role": msg["role"], "content": content})
-
-                # 시스템 프롬프트 추가
-                system_prompt = """당신은 건물 피해 분석 전문가입니다. 
-                사용자의 질문에 대해 전문적이고 상세한 답변을 제공하세요.
-                
-                다음 항목들을 포함해서 답변하세요:
-                1. 피해 유형 분석
-                2. 심각도 평가 (1-5 단계)
-                3. 수리 우선순위
-                4. 예상 수리 비용
-                5. 안전 주의사항
-                """
-
-                api_messages.insert(0, {"role": "system", "content": system_prompt})
-
-                # 메시지 해시 생성 (캐싱용)
-                messages_hash = str(hash(str(api_messages)))
-
-                response = get_openai_response(messages_hash, api_messages)
-
-                # 어시스턴트 응답 추가
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": response,
-                        "timestamp": datetime.now(),
-                        "response_type": "text_only",
-                    }
-                )
-
-            except Exception as e:
-                st.error(f"텍스트 분석 중 오류가 발생했습니다: {str(e)}")
-
-        st.session_state.processing = False
-        st.rerun()
+    # user_input이 있을 때 처리 (dict-like 객체 또는 문자열)
+    if user_input and not st.session_state.processing:
+        # UI 컴포넌트에서는 단순히 입력을 반환만 하고
+        # 실제 메시지 처리는 streamlit_app.py에서 담당
+        pass
 
     # 사이드바 - 공종명 대체 적용 안내
     with st.sidebar:
-        st.markdown("### 📋 공종명 대체 적용 안내")
+        st.markdown("### 공종명 대체 적용 안내")
 
         st.markdown(
             """
@@ -268,7 +171,7 @@ def render_simple_chatgpt_ui():
 
         st.markdown("---")
 
-        st.markdown("#### 🔄 대체 기준")
+        st.markdown("#### 대체 기준")
         st.markdown(
             """
         - **구조적 유사성**: 동일한 구조적 특성을 가진 공종
@@ -281,7 +184,7 @@ def render_simple_chatgpt_ui():
 
         st.markdown("---")
 
-        st.markdown("#### 📝 대체 적용 예시")
+        st.markdown("#### 대체 적용 예시")
         st.markdown(
             """
         • **금속 외장 패널** → 경량벽체 철골틀 설치
@@ -294,7 +197,7 @@ def render_simple_chatgpt_ui():
 
         st.markdown("---")
 
-        st.markdown("#### 🛠️ 복구 방법 선택 안내")
+        st.markdown("#### 복구 방법 선택 안내")
         st.markdown(
             """
         동일한 피해 항목에 대해 복수의 공종명 또는 인력 구성을 적용한 사례를 포함합니다. 사용자는 해당 작업의 실제 상황(규모, 환경, 장비 가용성 등)에 따라 적절한 시공 방식을 선택할 수 있습니다.
@@ -303,7 +206,7 @@ def render_simple_chatgpt_ui():
 
         st.markdown("---")
 
-        st.markdown("#### ⚠️ 중요 유의사항")
+        st.markdown("#### 중요 유의사항")
         st.warning(
             """
         **실제 시공 시**에는 현장 여건, 자재 사양, 공법 등을 종합적으로 고려하여 **설계자 또는 감리자의 최종 판단**이 필요합니다.
@@ -312,4 +215,4 @@ def render_simple_chatgpt_ui():
         """
         )
 
-    return user_message, uploaded_file, area_input
+    return user_input, area_input
