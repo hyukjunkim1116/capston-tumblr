@@ -1,0 +1,14 @@
+names:
+- crack
+- water_damage
+- fire_damage
+- roof_damage
+- window_damage
+- door_damage
+- foundation_damage
+- structural_deformation
+- facade_damage
+nc: 9
+path: /Users/kim/Desktop/2525-capston/tumblr/yolo_dataset
+train: train/images
+val: val/images

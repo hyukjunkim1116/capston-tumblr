@@ -10,11 +10,12 @@ from datetime import datetime
 from ui.ui_components import render_simple_chatgpt_ui
 
 # Import app modules
-from app.config import initialize_modules, setup_directories, get_app_config
+from app.config import setup_directories
 from app.data_processor import (
     save_uploaded_file,
     validate_uploaded_file,
     validate_area_input,
+    validate_image_content,
 )
 from app.analysis_engine import analyze_damage_with_ai
 
@@ -26,10 +27,7 @@ logger = logging.getLogger(__name__)
 def main():
     """메인 애플리케이션 함수"""
 
-    # Initialize modules and setup
-    modules = initialize_modules()
-    upload_dir, results_dir = setup_directories()
-    app_config = get_app_config()
+    upload_dir, _ = setup_directories() 
 
     # Render the simple ChatGPT UI and get user inputs
     user_input, area_input = render_simple_chatgpt_ui()
@@ -65,13 +63,28 @@ def main():
         # If there's an uploaded file, validate and analyze
         if uploaded_file is not None:
 
-            # Validate uploaded file
+            # 1. 파일 형식 및 크기 검증
             file_valid, file_message = validate_uploaded_file(uploaded_file)
             if not file_valid:
                 st.error(file_message)
                 return
 
-            # Validate area input
+            # 2. 이미지 내용 검증 (건물인지 확인)
+            content_valid, content_message = validate_image_content(uploaded_file)
+            if not content_valid:
+                st.error(content_message)
+                # 사용자 메시지는 이미 추가되었으므로 오류 메시지만 추가
+                st.session_state.messages.append(
+                    {
+                        "role": "assistant",
+                        "content": content_message,
+                        "timestamp": datetime.now(),
+                        "response_type": "validation_error",
+                    }
+                )
+                st.rerun()
+
+            # 3. 면적 입력 검증
             area_valid, area_message = validate_area_input(area_input)
             if not area_valid:
                 st.error(area_message)
@@ -88,10 +101,6 @@ def main():
                     image_path=str(file_path),
                     area=area_input,
                     user_message=user_message,
-                    analyze_building_damage_func=modules["analyze_building_damage"],
-                    create_faiss_vector_store_func=modules["create_faiss_vector_store"],
-                    modules_loaded=app_config["modules_loaded"],
-                    vector_store_available=app_config["vector_store_available"],
                 )
 
                 # Add the analysis result as assistant message
@@ -101,6 +110,12 @@ def main():
                         "content": analysis_result,
                         "timestamp": datetime.now(),
                         "response_type": "comprehensive",
+                        "pdf_data": {  # PDF 생성을 위한 데이터 저장
+                            "analysis_result": analysis_result,
+                            "image_path": str(file_path),
+                            "area": area_input,
+                            "user_message": user_message,
+                        },
                     }
                 )
                 st.rerun()
@@ -122,7 +137,6 @@ def main():
 - 외부 마감재: 외벽, 창호 손상 확인
 - 설비 피해: 전기, 배관 시설 점검"""
 
-            # Add text-only response
             st.session_state.messages.append(
                 {
                     "role": "assistant",
@@ -132,8 +146,6 @@ def main():
                 }
             )
             st.rerun()
-
-        # If no image was uploaded, the text response will be used
 
 
 if __name__ == "__main__":

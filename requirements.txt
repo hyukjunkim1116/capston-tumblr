@@ -1,56 +1,51 @@
-# Core ML and AI libraries
+# 새로운 기술 스택 - 핵심 패키지만
+ultralytics>=8.0.0  # YOLOv8
+openai>=1.0.0  # GPT-4 API
+git+https://github.com/openai/CLIP.git  # CLIP model
+
+# 기본 ML/AI 라이브러리
 torch>=2.0.0
 torchvision>=0.15.0
 transformers>=4.30.0
+
+# LangChain (GPT-4 체인용)
 langchain>=0.1.0
 langchain-openai>=0.1.0
-langchain-community>=0.0.20
 
-# Computer Vision
+# 컴퓨터 비전
 opencv-python-headless>=4.8.0
 Pillow>=10.0.0
-albumentations>=1.3.0
 
-# Data processing
+# 데이터 처리
 pandas>=2.0.0
 numpy>=1.24.0
 openpyxl>=3.1.0
-scikit-learn>=1.3.0
 
-# Vector database and embeddings
-faiss-cpu>=1.7.4
-sentence-transformers>=2.2.0
-
-# Document processing
-pypdf>=3.15.0
-python-docx>=0.8.11
-xlrd>=2.0.1
-unstructured>=0.10.0
-
-# Web framework - Streamlit
+# Streamlit 웹 프레임워크
 streamlit>=1.28.0
 streamlit-option-menu>=0.3.6
-streamlit-aggrid>=0.3.4
-streamlit-image-comparison>=0.0.4
 
-# Image processing and visualization
+# 이미지 처리 및 시각화
 matplotlib>=3.7.0
-seaborn>=0.12.0
 plotly>=5.15.0
 
-# Utilities
+# 유틸리티
 tqdm>=4.65.0
 python-dotenv>=1.0.0
-pydantic>=2.0.0
-typing-extensions>=4.7.0
-watchdog>=3.0.0
+requests>=2.31.0
 pathlib2>=2.3.7
 
-# Additional dependencies for deployment
-requests>=2.31.0
-urllib3>=2.0.0
-certifi>=2023.7.22
+# 모델 훈련 추가 패키지
+PyYAML>=6.0  # YOLO 설정 파일용
+tensorboard>=2.13.0  # 훈련 모니터링
+scikit-learn>=1.3.0  # 데이터 분할 및 평가
 
-# Optional: GPU acceleration
-# tensorrt>=8.6.0  # Uncomment if using NVIDIA GPU
-# onnxruntime-gpu>=1.15.0  # Uncomment for ONNX GPU support 
+# CLIP for image content validation
+openai-clip
+ftfy
+regex
+
+# PDF Report Generation
+reportlab>=4.0.0
+weasyprint>=60.0
+matplotlib>=3.7.0 

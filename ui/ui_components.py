@@ -1,16 +1,17 @@
 import streamlit as st
 import os
-from openai import OpenAI
-from datetime import datetime
 from dotenv import load_dotenv
+from datetime import datetime
 
 # .env 파일에서 환경변수 로드
 load_dotenv()
 
-# OpenAI API 설정
+# OpenAI API 설정 (캐시된 응답을 위해 유지)
 openai_api_key = os.getenv("OPENAI_API_KEY")
 if openai_api_key:
     os.environ["OPENAI_API_KEY"] = openai_api_key
+    from openai import OpenAI
+
     client = OpenAI()
 else:
     client = None
@@ -131,10 +132,47 @@ def render_simple_chatgpt_ui():
 
             with st.chat_message("assistant", avatar=avatar):
                 st.write(message["content"])
+                if response_type == "comprehensive" and "pdf_data" in message:
+                    col1, col2, col3 = st.columns([1, 2, 1])
+                    with col2:
+                        try:
+                            # PDF 생성기 import (지연 import로 오류 방지)
+                            from app.pdf_generator import create_damage_report_pdf
+
+                            pdf_data = message["pdf_data"]
+
+                            # PDF 생성
+                            with st.spinner("PDF 보고서 생성 중..."):
+                                pdf_buffer = create_damage_report_pdf(
+                                    analysis_result=pdf_data["analysis_result"],
+                                    image_path=pdf_data["image_path"],
+                                    area=pdf_data["area"],
+                                    user_message=pdf_data["user_message"],
+                                )
+
+                            # 파일명 생성
+                            timestamp = message["timestamp"].strftime("%Y%m%d_%H%M%S")
+                            filename = f"건물손상분석보고서_{timestamp}.pdf"
+
+                            # 바로 다운로드 버튼 (클릭하면 즉시 다운로드)
+                            st.download_button(
+                                label="PDF 보고서 다운로드",
+                                data=pdf_buffer.getvalue(),
+                                file_name=filename,
+                                mime="application/pdf",
+                                key=f"download_btn_{message['timestamp']}",
+                                type="primary",
+                            )
+
+                        except Exception as e:
+                            st.error(f"PDF 생성 중 오류가 발생했습니다: {str(e)}")
+                            st.info(
+                                "분석 결과는 위의 텍스트 형태로 확인하실 수 있습니다."
+                            )
 
     # st.chat_input을 사용한 메시지 입력 (하단에 자동 고정됨)
     user_input = st.chat_input(
-        placeholder="건물 피해에 대해 무엇이든 물어보세요...",
+        placeholder="건물 손상 사진을 업로드하고 분석을 요청하세요...",
         disabled=st.session_state.processing,
         accept_file=True,
         file_type=["jpg", "jpeg", "png", "bmp", "tiff"],
@@ -153,13 +191,6 @@ def render_simple_chatgpt_ui():
         disabled=st.session_state.processing,
     )
 
-    # user_input이 있을 때 처리 (dict-like 객체 또는 문자열)
-    if user_input and not st.session_state.processing:
-        # UI 컴포넌트에서는 단순히 입력을 반환만 하고
-        # 실제 메시지 처리는 streamlit_app.py에서 담당
-        pass
-
-    # 사이드바 - 공종명 대체 적용 안내
     with st.sidebar:
         st.markdown("### 공종명 대체 적용 안내")
 
@@ -168,8 +199,6 @@ def render_simple_chatgpt_ui():
         본 분석에 사용된 공종명은 **건설공사 표준품셈**을 기준으로 하되, 실제 피해 상황과 1:1로 정확히 매칭되지 않는 일부 공종에 대해서는 다음과 같은 기준에 따라 유사하거나 기능적으로 대응 가능한 공종으로 대체 적용하였습니다.
         """
         )
-
-        st.markdown("---")
 
         st.markdown("#### 대체 기준")
         st.markdown(
@@ -182,8 +211,6 @@ def render_simple_chatgpt_ui():
         """
         )
 
-        st.markdown("---")
-
         st.markdown("#### 대체 적용 예시")
         st.markdown(
             """
@@ -195,7 +222,7 @@ def render_simple_chatgpt_ui():
         """
         )
 
-        st.markdown("---")
+        
 
         st.markdown("#### 복구 방법 선택 안내")
         st.markdown(
@@ -204,7 +231,7 @@ def render_simple_chatgpt_ui():
         """
         )
 
-        st.markdown("---")
+        
 
         st.markdown("#### 중요 유의사항")
         st.warning(
