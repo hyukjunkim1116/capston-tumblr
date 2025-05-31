@@ -17,17 +17,20 @@ from app.data_processor import (
     validate_area_input,
     validate_image_content,
 )
-from app.analysis_engine import analyze_damage_with_ai
+from app.analysis_engine import AnalysisEngine
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Initialize analysis engine
+analysis_engine = AnalysisEngine()
+
 
 def main():
     """메인 애플리케이션 함수"""
 
-    upload_dir, _ = setup_directories() 
+    upload_dir, _ = setup_directories()
 
     # Render the simple ChatGPT UI and get user inputs
     user_input, area_input = render_simple_chatgpt_ui()
@@ -97,27 +100,54 @@ def main():
                 )
 
                 # Analyze the damage using the modular analysis engine
-                analysis_result = analyze_damage_with_ai(
+                analysis_result = analysis_engine.generate_comprehensive_analysis(
                     image_path=str(file_path),
                     area=area_input,
                     user_message=user_message,
                 )
 
-                # Add the analysis result as assistant message
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": analysis_result,
-                        "timestamp": datetime.now(),
-                        "response_type": "comprehensive",
-                        "pdf_data": {  # PDF 생성을 위한 데이터 저장
-                            "analysis_result": analysis_result,
-                            "image_path": str(file_path),
-                            "area": area_input,
-                            "user_message": user_message,
-                        },
+                if analysis_result["success"]:
+                    # 분석 성공
+                    response_content = analysis_result["analysis_text"]
+
+                    # PDF 데이터 준비 (구조화된 데이터 포함)
+                    pdf_data = {
+                        "analysis_result": analysis_result["analysis_text"],
+                        "image_path": str(file_path),
+                        "area": area_input,
+                        "user_message": user_message,
+                        "damage_areas": analysis_result["damage_areas"],
                     }
-                )
+
+                    # Add the analysis result as assistant message
+                    st.session_state.messages.append(
+                        {
+                            "role": "assistant",
+                            "content": response_content,
+                            "timestamp": datetime.now(),
+                            "response_type": "comprehensive",
+                            "pdf_data": pdf_data,
+                        }
+                    )
+
+                    logger.info(
+                        f"분석 완료 - 처리 시간: {analysis_result.get('processing_time', 0):.2f}초"
+                    )
+
+                else:
+                    # 분석 실패
+                    error_message = analysis_result.get(
+                        "error", "알 수 없는 오류가 발생했습니다."
+                    )
+                    st.session_state.messages.append(
+                        {
+                            "role": "assistant",
+                            "content": f"분석 중 오류가 발생했습니다: {error_message}",
+                            "timestamp": datetime.now(),
+                            "response_type": "error",
+                        }
+                    )
+
                 st.rerun()
 
             except Exception as e:

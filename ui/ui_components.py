@@ -148,6 +148,7 @@ def render_simple_chatgpt_ui():
                                     image_path=pdf_data["image_path"],
                                     area=pdf_data["area"],
                                     user_message=pdf_data["user_message"],
+                                    damage_areas=pdf_data.get("damage_areas", []),
                                 )
 
                             # 파일명 생성
@@ -222,16 +223,12 @@ def render_simple_chatgpt_ui():
         """
         )
 
-        
-
         st.markdown("#### 복구 방법 선택 안내")
         st.markdown(
             """
         동일한 피해 항목에 대해 복수의 공종명 또는 인력 구성을 적용한 사례를 포함합니다. 사용자는 해당 작업의 실제 상황(규모, 환경, 장비 가용성 등)에 따라 적절한 시공 방식을 선택할 수 있습니다.
         """
         )
-
-        
 
         st.markdown("#### 중요 유의사항")
         st.warning(

@@ -15,6 +15,7 @@ import torch
 import cv2
 import os
 from openai import OpenAI
+from datetime import datetime
 
 # YOLOv8 관련
 try:
@@ -79,6 +80,307 @@ DAMAGE_TYPE_KR_MAP = {
     "facade damage": "외벽 피해",
     "normal building": "정상",
 }
+
+
+class AnalysisEngine:
+    """통합 분석 엔진 - YOLOv8 + CLIP + GPT-4 파이프라인"""
+
+    def __init__(self):
+        """분석 엔진 초기화"""
+        logger.info("AnalysisEngine 초기화 시작")
+
+        # 시작 시간 기록
+        self.start_time = time.time()
+
+        # 각 모듈 초기화
+        self.yolo_model = YOLODamageDetector()
+        self.clip_model = CLIPDamageClassifier()
+        self.gpt_model = GPTReportGenerator()
+
+        # 데이터 프로세서 (이미지 검증용)
+        from app.data_processor import DataProcessor
+
+        self.data_processor = DataProcessor()
+
+        logger.info("AnalysisEngine 초기화 완료")
+
+    def generate_comprehensive_analysis(
+        self, image_path: str, area: float, user_message: str = ""
+    ) -> Dict[str, Any]:
+        """종합 분석 실행 및 결과 반환"""
+        try:
+            logger.info("종합 분석 시작")
+            self.start_time = time.time()
+
+            # 1. 이미지 검증
+            validation_result = self.data_processor.validate_image_content(image_path)
+            if not validation_result["is_valid"]:
+                return {
+                    "success": False,
+                    "error": validation_result["error"],
+                    "error_type": "validation_error",
+                }
+
+            # 2. YOLO 피해 탐지
+            yolo_result = self.yolo_model.detect_damage_areas(image_path)
+            if not yolo_result:  # 빈 리스트면 폴백 처리
+                yolo_result = [
+                    {
+                        "bbox": [0, 0, 100, 100],
+                        "confidence": 0.5,
+                        "class_id": 0,
+                        "area_id": "fallback",
+                    }
+                ]
+
+            # 3. CLIP 분류
+            image = Image.open(image_path)
+            clip_results = {}
+
+            for detection in yolo_result:
+                bbox = detection["bbox"]
+                crop = image.crop((bbox[0], bbox[1], bbox[2], bbox[3]))
+                classification = self.clip_model.classify_damage_type(crop)
+
+                # 최고 확률 피해 유형 선택
+                best_damage_type = max(classification, key=classification.get)
+                detection["class"] = best_damage_type
+                detection["confidence"] = classification[best_damage_type]
+
+                clip_results[best_damage_type] = {
+                    "damage_type_kr": DAMAGE_TYPE_KR_MAP.get(
+                        best_damage_type, best_damage_type
+                    ),
+                    "confidence": classification[best_damage_type],
+                }
+
+            # 4. 기준 데이터 조회 및 구조화된 데이터 생성
+            structured_data = self._create_structured_analysis_data(
+                yolo_result, clip_results, area, user_message
+            )
+
+            # 5. 사용자 친화적 텍스트 생성
+            text_analysis = self._generate_user_friendly_text(structured_data)
+
+            # 6. 결과 반환
+            return {
+                "success": True,
+                "analysis_text": text_analysis,
+                "structured_data": structured_data,
+                "damage_areas": structured_data["damage_areas"],
+                "yolo_detections": yolo_result,
+                "clip_classifications": clip_results,
+                "processing_time": time.time() - self.start_time,
+            }
+
+        except Exception as e:
+            logger.error(f"종합 분석 오류: {e}")
+            return {
+                "success": False,
+                "error": f"분석 중 오류 발생: {str(e)}",
+                "error_type": "analysis_error",
+            }
+
+    def _create_structured_analysis_data(
+        self, detections: list, classifications: dict, area: float, user_message: str
+    ) -> Dict[str, Any]:
+        """구조화된 분석 데이터 생성"""
+        from app.criteria_loader import get_criteria_manager
+
+        criteria_manager = get_criteria_manager()
+        damage_areas = []
+
+        for i, detection in enumerate(detections):
+            damage_type = detection.get("class", "unknown")
+            confidence = detection.get("confidence", 0.0)
+
+            # CLIP 분류 결과 반영
+            if damage_type in classifications:
+                classification = classifications[damage_type]
+                damage_type_kr = classification.get("damage_type_kr", damage_type)
+            else:
+                damage_type_kr = self._get_korean_damage_type(damage_type)
+
+            # 기준 데이터에서 상세 정보 조회
+            criteria = criteria_manager.get_damage_assessment_criteria(damage_type)
+
+            # 심각도 계산
+            severity_level = min(5, max(1, int(confidence * 5) + 1))
+            severity_desc = (
+                list(criteria.get("severity_levels", {}).values())[severity_level - 1]
+                if criteria.get("severity_levels")
+                else "보통 손상"
+            )
+
+            # 구조화된 피해 영역 데이터
+            damage_area = {
+                "name": f"피해영역 {i+1}",
+                "damage_type": damage_type,
+                "damage_type_kr": damage_type_kr,
+                "confidence": confidence,
+                "severity_level": severity_level,
+                "description": f"{damage_type_kr} - {severity_desc} (신뢰도: {confidence:.2f})",
+                "basis": self._get_recovery_basis(damage_type, criteria),
+                "process": self._get_process_name(damage_type, criteria),
+                "materials": self._get_material_list(damage_type, criteria),
+                "coordinates": detection.get("bbox", [0, 0, 0, 0]),
+            }
+
+            damage_areas.append(damage_area)
+
+        return {
+            "basic_info": {
+                "analysis_date": datetime.now().strftime("%Y년 %m월 %d일 %H시 %M분"),
+                "analysis_area": area,
+                "user_message": user_message,
+                "total_damages": len(
+                    [d for d in damage_areas if d["damage_type"] != "normal building"]
+                ),
+                "total_areas": len(damage_areas),
+            },
+            "damage_areas": damage_areas,
+            "summary": {
+                "total_detections": len(detections),
+                "damage_count": len(
+                    [d for d in damage_areas if d["damage_type"] != "normal building"]
+                ),
+                "normal_count": len(
+                    [d for d in damage_areas if d["damage_type"] == "normal building"]
+                ),
+            },
+        }
+
+    def _get_korean_damage_type(self, damage_type: str) -> str:
+        """피해 유형 한국어 변환"""
+        return DAMAGE_TYPE_KR_MAP.get(damage_type, damage_type)
+
+    def _get_recovery_basis(self, damage_type: str, criteria: Dict) -> str:
+        """복구 근거 생성 (표준시방서 기반)"""
+        basis_templates = {
+            "crack damage": "「건축공사 표준시방서」 제6장 콘크리트공사 6.5.3 균열보수에 따라 균열폭 0.3mm 이상 시 에폭시 수지 주입공법을 적용하며, 「KCS 41 30 02 현장치기콘크리트공사」의 균열보수 기준을 준수합니다.",
+            "water damage": "「건축공사 표준시방서」 제12장 방수공사 및 「KCS 41 40 00 방수공사」에 따라 침수 피해 부위의 기존 방수층 제거 후 바탕처리 및 신규 방수재 시공을 실시합니다.",
+            "fire damage": "「건축공사 표준시방서」 제14장 마감공사 및 「재난 안전 관리 지침」에 따라 화재 손상 부위의 구조 안전성 검토 후 손상 정도에 따른 단계적 복구를 실시합니다.",
+            "roof damage": "「건축공사 표준시방서」 제11장 지붕공사 및 「KCS 41 50 00 지붕공사」에 따라 지붕재 교체 및 방수층 보강을 실시하며, 구조체 점검을 선행합니다.",
+            "window damage": "「건축공사 표준시방서」 제9장 창호공사 및 「KCS 41 60 00 창호공사」에 따라 손상된 창호의 해체 및 신규 창호 설치를 실시합니다.",
+            "door damage": "「건축공사 표준시방서」 제9장 창호공사 및 「KCS 41 60 00 창호공사」에 따라 손상된 문짝 및 문틀의 보수 또는 교체를 실시합니다.",
+            "foundation damage": "「건축공사 표준시방서」 제5장 기초공사 및 「KCS 41 20 00 기초공사」에 따라 기초 구조체의 안전성 검토 후 언더피닝 또는 보강공법을 적용합니다.",
+            "structural deformation": "「건축구조기준」 및 「KCS 41 30 00 콘크리트공사」에 따라 구조 안전성 정밀진단 후 구조보강 설계에 의한 보강공사를 실시합니다.",
+            "facade damage": "「건축공사 표준시방서」 제14장 마감공사 및 「KCS 41 70 00 마감공사」에 따라 외벽 마감재의 해체 및 신규 시공을 실시합니다.",
+        }
+
+        return basis_templates.get(
+            damage_type,
+            f"「건축공사 표준시방서」 및 관련 KCS 기준에 따라 {damage_type} 복구공사를 실시합니다.",
+        )
+
+    def _get_process_name(self, damage_type: str, criteria: Dict) -> str:
+        """공정명 생성"""
+        process_names = {
+            "crack damage": "균열보수공사 → 에폭시수지 주입공법 → 표면 마감공사",
+            "water damage": "기존 방수층 제거 → 바탕처리 → 방수재 도포 → 보호층 시공",
+            "fire damage": "화재손상부 해체 → 구조보강 → 마감재 시공 → 도장공사",
+            "roof damage": "기존 지붕재 해체 → 방수층 보강 → 지붕재 설치 → 마감공사",
+            "window damage": "기존 창호 해체 → 개구부 정리 → 신규 창호 설치 → 실링공사",
+            "door damage": "기존 문 해체 → 문틀 점검 → 신규 문 설치 → 마감공사",
+            "foundation damage": "기초 굴착 → 구조보강 → 언더피닝 → 되메우기",
+            "structural deformation": "구조진단 → 보강설계 → 구조보강공사 → 마감복구",
+            "facade damage": "기존 마감재 해체 → 바탕처리 → 신규 마감재 시공 → 실링공사",
+        }
+
+        return process_names.get(damage_type, f"{damage_type} 복구공사")
+
+    def _get_material_list(self, damage_type: str, criteria: Dict) -> list:
+        """복구 예상 자재 리스트 생성"""
+        materials_dict = {
+            "crack damage": [
+                {"name": "에폭시 수지", "usage": "균열 주입용"},
+                {"name": "프라이머", "usage": "접착력 향상"},
+                {"name": "실링재", "usage": "표면 마감"},
+            ],
+            "water damage": [
+                {"name": "우레탄 방수재", "usage": "방수층 형성"},
+                {"name": "프라이머", "usage": "바탕처리"},
+                {"name": "보호몰탈", "usage": "방수층 보호"},
+            ],
+            "fire damage": [
+                {"name": "내화 보드", "usage": "내화성능 확보"},
+                {"name": "구조용 접착제", "usage": "구조 보강"},
+                {"name": "내화 도료", "usage": "마감 및 보호"},
+            ],
+            "roof damage": [
+                {"name": "기와 또는 슬레이트", "usage": "지붕재"},
+                {"name": "방수시트", "usage": "방수층"},
+                {"name": "단열재", "usage": "단열성능"},
+            ],
+            "window damage": [
+                {"name": "알루미늄 창호", "usage": "창호 교체"},
+                {"name": "복층유리", "usage": "단열성능"},
+                {"name": "실링재", "usage": "기밀성 확보"},
+            ],
+            "door damage": [
+                {"name": "목재 또는 스틸 도어", "usage": "문짝 교체"},
+                {"name": "경첩 및 손잡이", "usage": "하드웨어"},
+                {"name": "실링재", "usage": "기밀성 확보"},
+            ],
+            "foundation damage": [
+                {"name": "구조용 콘크리트", "usage": "기초 보강"},
+                {"name": "철근", "usage": "구조 보강"},
+                {"name": "방수재", "usage": "지하 방수"},
+            ],
+            "structural deformation": [
+                {"name": "구조용 강재", "usage": "구조 보강"},
+                {"name": "고강도 볼트", "usage": "접합부"},
+                {"name": "무수축 몰탈", "usage": "충전재"},
+            ],
+            "facade damage": [
+                {"name": "외장 마감재", "usage": "외벽 마감"},
+                {"name": "단열재", "usage": "단열성능"},
+                {"name": "마감 도료", "usage": "최종 마감"},
+            ],
+        }
+
+        return materials_dict.get(
+            damage_type, [{"name": "표준 건축자재", "usage": "복구용"}]
+        )
+
+    def _generate_user_friendly_text(self, structured_data: Dict) -> str:
+        """사용자 친화적 텍스트 생성 (표준시방서 근거 포함)"""
+        basic_info = structured_data["basic_info"]
+        damage_areas = structured_data["damage_areas"]
+
+        sections = []
+
+        # 1. 피해 현황
+        sections.append("## 피해 현황")
+        sections.append(
+            f"총 {basic_info['total_areas']}개 영역 중 {basic_info['total_damages']}개 피해 영역을 발견했습니다."
+        )
+
+        for area in damage_areas:
+            if area["damage_type"] != "normal building":
+                sections.append(f"• {area['name']}: {area['description']}")
+
+        # 2. 복구 근거
+        sections.append("\n## 복구 근거")
+        for area in damage_areas:
+            if area["damage_type"] != "normal building":
+                sections.append(f"**{area['name']}**: {area['basis']}")
+
+        # 3. 공정명
+        sections.append("\n## 복구 공정")
+        for area in damage_areas:
+            if area["damage_type"] != "normal building":
+                sections.append(f"**{area['name']}**: {area['process']}")
+
+        # 4. 복구 예상 자재
+        sections.append("\n## 복구 예상 자재")
+        for area in damage_areas:
+            if area["damage_type"] != "normal building":
+                sections.append(f"**{area['name']}**:")
+                for material in area["materials"]:
+                    sections.append(f"  - {material['name']}: {material['usage']}")
+
+        return "\n".join(sections)
 
 
 class YOLODamageDetector:

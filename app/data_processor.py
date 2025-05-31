@@ -235,3 +235,93 @@ def validate_image_content(uploaded_file) -> Tuple[bool, str]:
         logger.error(f"이미지 내용 검증 오류: {e}")
         # 오류 시에는 통과시킴 (사용자 경험 우선)
         return True, f"이미지 내용 검증 중 오류 발생: {str(e)}"
+
+
+class DataProcessor:
+    """데이터 처리 클래스 - 파일 업로드, 검증, 이미지 내용 검증 등"""
+
+    def __init__(self):
+        """데이터 프로세서 초기화"""
+        self.clip_model = None
+        self.clip_preprocess = None
+        self._load_clip_model()
+
+    def _load_clip_model(self):
+        """CLIP 모델 로드"""
+        if CLIP_AVAILABLE:
+            try:
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+                self.clip_model, self.clip_preprocess = clip.load(
+                    "ViT-B/32", device=device
+                )
+                logger.info("DataProcessor: CLIP 모델 로드 완료")
+            except Exception as e:
+                logger.error(f"DataProcessor: CLIP 모델 로드 실패: {e}")
+
+    def validate_image_content(self, image_path: str) -> Dict[str, Any]:
+        """이미지 내용이 건물인지 검증"""
+        try:
+            if not CLIP_AVAILABLE or self.clip_model is None:
+                return {"is_valid": True, "message": "CLIP 모델 없음, 검증 건너뜀"}
+
+            # 이미지 로드
+            image = Image.open(image_path)
+            if image.mode != "RGB":
+                image = image.convert("RGB")
+
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            image_input = self.clip_preprocess(image).unsqueeze(0).to(device)
+
+            # 건물 관련 vs 비건물 텍스트 프롬프트
+            building_prompts = [
+                "a photo of a building",
+                "a photo of a house",
+                "a photo of architecture",
+                "a photo of a structure",
+                "a photo of construction",
+                "a photo of a damaged building",
+            ]
+
+            non_building_prompts = [
+                "a photo of a person",
+                "a photo of an animal",
+                "a photo of food",
+                "a photo of a vehicle",
+                "a photo of nature landscape",
+                "a photo of text",
+            ]
+
+            all_prompts = building_prompts + non_building_prompts
+            text_inputs = torch.cat(
+                [clip.tokenize(prompt) for prompt in all_prompts]
+            ).to(device)
+
+            # CLIP 추론
+            with torch.no_grad():
+                logits_per_image, logits_per_text = self.clip_model(
+                    image_input, text_inputs
+                )
+                probs = logits_per_image.softmax(dim=-1).cpu().numpy()[0]
+
+            # 건물 관련 확률 계산
+            building_prob = sum(probs[: len(building_prompts)])
+
+            # 임계값 설정 (40% 이상이어야 통과)
+            building_threshold = 0.4
+
+            if building_prob >= building_threshold:
+                return {
+                    "is_valid": True,
+                    "message": f"건물 이미지로 확인됨 (신뢰도: {building_prob:.1%})",
+                    "confidence": building_prob,
+                }
+            else:
+                return {
+                    "is_valid": False,
+                    "error": f"건물 이미지가 아닙니다 (건물 확률: {building_prob:.1%}). 건물 손상 사진을 업로드해주세요.",
+                    "confidence": building_prob,
+                }
+
+        except Exception as e:
+            logger.error(f"이미지 내용 검증 오류: {e}")
+            return {"is_valid": True, "message": "검증 중 오류 발생, 통과 처리"}

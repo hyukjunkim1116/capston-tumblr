@@ -205,6 +205,7 @@ class BuildingDamageReportGenerator:
         image_path: Optional[str] = None,
         area: float = 0.0,
         user_message: str = "",
+        damage_areas: Optional[list] = None,
         output_path: Optional[str] = None,
     ) -> io.BytesIO:
         """
@@ -215,6 +216,7 @@ class BuildingDamageReportGenerator:
             image_path: 분석된 이미지 경로
             area: 분석 면적
             user_message: 사용자 메시지
+            damage_areas: 피해 영역 데이터
             output_path: PDF 저장 경로 (None이면 BytesIO 반환)
 
         Returns:
@@ -244,17 +246,26 @@ class BuildingDamageReportGenerator:
             # 2. 기본 정보
             story.extend(self._create_basic_info(area, user_message))
 
-            # 3. 분석 이미지 (있는 경우)
+            # 3. 현장사진 (이미지가 있는 경우)
             if image_path and os.path.exists(image_path):
-                story.extend(self._create_image_section(image_path))
+                story.extend(self._create_site_photo_section(image_path))
 
-            # 4. 분석 결과
-            story.extend(self._create_analysis_section(analysis_result))
+            # 4. 피해 현황
+            story.extend(self._create_damage_status_section(damage_areas or []))
 
-            # 5. 안전 주의사항
+            # 5. 복구 근거
+            story.extend(self._create_recovery_basis_section(damage_areas or []))
+
+            # 6. 공정명
+            story.extend(self._create_process_name_section(damage_areas or []))
+
+            # 7. 복구 예상 자재
+            story.extend(self._create_materials_section(damage_areas or []))
+
+            # 8. 안전 주의사항
             story.extend(self._create_safety_section())
 
-            # 6. 푸터
+            # 9. 푸터
             story.extend(self._create_footer())
 
             # PDF 생성
@@ -347,11 +358,11 @@ class BuildingDamageReportGenerator:
 
         return elements
 
-    def _create_image_section(self, image_path: str) -> list:
-        """분석 이미지 섹션 생성"""
+    def _create_site_photo_section(self, image_path: str) -> list:
+        """현장사진 섹션 생성"""
         elements = []
 
-        elements.append(Paragraph("2. 분석 대상 이미지", self.styles["SectionHeader"]))
+        elements.append(Paragraph("2. 현장사진", self.styles["SectionHeader"]))
 
         try:
             # 이미지 크기 조정
@@ -387,28 +398,128 @@ class BuildingDamageReportGenerator:
 
         return elements
 
-    def _create_analysis_section(self, analysis_result: str) -> list:
-        """분석 결과 섹션 생성"""
+    def _create_damage_status_section(self, damage_areas: list) -> list:
+        """피해 현황 섹션 생성"""
         elements = []
 
-        elements.append(Paragraph("3. AI 분석 결과", self.styles["SectionHeader"]))
+        elements.append(Paragraph("3. 피해 현황", self.styles["SectionHeader"]))
 
-        # 분석 결과를 문단별로 분리하여 추가
-        paragraphs = analysis_result.split("\n\n")
+        # 피해 영역 테이블
+        data = [
+            ["영역", "피해 정도"],
+        ]
 
-        for paragraph in paragraphs:
-            if paragraph.strip():
-                # 마크다운 형태의 텍스트를 일부 정리
-                cleaned_text = paragraph.replace("**", "").replace("*", "•")
+        for area in damage_areas:
+            data.append([area["name"], area["description"]])
 
-                # 제목인지 확인 (### 시작하는 경우)
-                if cleaned_text.startswith("###"):
-                    title_text = cleaned_text.replace("###", "").strip()
-                    elements.append(Paragraph(title_text, self.styles["SubHeader"]))
-                else:
-                    elements.append(Paragraph(cleaned_text, self.styles["CustomBody"]))
+        table = Table(data, colWidths=[3 * cm, 10 * cm])
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f3f4f6")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1f2937")),
+                    ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor("#374151")),
+                    ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    # 한글 폰트 적용
+                    ("FONTNAME", (0, 0), (-1, 0), self.korean_font_bold),  # 헤더는 Bold
+                    ("FONTNAME", (0, 1), (-1, -1), self.korean_font),  # 내용은 Regular
+                    ("FONTSIZE", (0, 0), (-1, -1), 10),
+                    (
+                        "ROWBACKGROUNDS",
+                        (0, 1),
+                        (-1, -1),
+                        [colors.white, colors.HexColor("#f9fafb")],
+                    ),
+                    ("GRID", (0, 0), (-1, -1), 1, colors.HexColor("#e5e7eb")),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ]
+            )
+        )
 
-                elements.append(Spacer(1, 0.1 * inch))
+        elements.append(table)
+        elements.append(Spacer(1, 0.3 * inch))
+
+        return elements
+
+    def _create_recovery_basis_section(self, damage_areas: list) -> list:
+        """복구 근거 섹션 생성"""
+        elements = []
+
+        elements.append(Paragraph("4. 복구 근거", self.styles["SectionHeader"]))
+
+        # 복구 근거 텍스트
+        recovery_basis = "\n".join([area["basis"] for area in damage_areas])
+        recovery_basis_para = Paragraph(recovery_basis, self.styles["CustomBody"])
+        elements.append(recovery_basis_para)
+
+        elements.append(Spacer(1, 0.3 * inch))
+
+        return elements
+
+    def _create_process_name_section(self, damage_areas: list) -> list:
+        """공정명 섹션 생성"""
+        elements = []
+
+        elements.append(Paragraph("5. 공정명", self.styles["SectionHeader"]))
+
+        # 공정명 텍스트
+        process_names = "\n".join([area["process"] for area in damage_areas])
+        process_names_para = Paragraph(process_names, self.styles["CustomBody"])
+        elements.append(process_names_para)
+
+        elements.append(Spacer(1, 0.3 * inch))
+
+        return elements
+
+    def _create_materials_section(self, damage_areas: list) -> list:
+        """복구 예상 자재 섹션 생성"""
+        elements = []
+
+        elements.append(Paragraph("6. 복구 예상 자재", self.styles["SectionHeader"]))
+
+        # 자재 테이블
+        data = [
+            ["자재", "용도"],
+        ]
+
+        for area in damage_areas:
+            for material in area["materials"]:
+                data.append([material["name"], material["usage"]])
+
+        table = Table(data, colWidths=[3 * cm, 10 * cm])
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f3f4f6")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1f2937")),
+                    ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor("#374151")),
+                    ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    # 한글 폰트 적용
+                    ("FONTNAME", (0, 0), (-1, 0), self.korean_font_bold),  # 헤더는 Bold
+                    ("FONTNAME", (0, 1), (-1, -1), self.korean_font),  # 내용은 Regular
+                    ("FONTSIZE", (0, 0), (-1, -1), 10),
+                    (
+                        "ROWBACKGROUNDS",
+                        (0, 1),
+                        (-1, -1),
+                        [colors.white, colors.HexColor("#f9fafb")],
+                    ),
+                    ("GRID", (0, 0), (-1, -1), 1, colors.HexColor("#e5e7eb")),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ]
+            )
+        )
+
+        elements.append(table)
+        elements.append(Spacer(1, 0.3 * inch))
 
         return elements
 
@@ -417,7 +528,7 @@ class BuildingDamageReportGenerator:
         elements = []
 
         elements.append(
-            Paragraph("4. 중요 안전 주의사항", self.styles["SectionHeader"])
+            Paragraph("7. 중요 안전 주의사항", self.styles["SectionHeader"])
         )
 
         safety_warnings = [
@@ -493,6 +604,7 @@ def create_damage_report_pdf(
     image_path: Optional[str] = None,
     area: float = 0.0,
     user_message: str = "",
+    damage_areas: Optional[list] = None,
     output_path: Optional[str] = None,
 ) -> io.BytesIO:
     """
@@ -503,6 +615,7 @@ def create_damage_report_pdf(
         image_path: 분석 이미지 경로
         area: 분석 면적
         user_message: 사용자 메시지
+        damage_areas: 피해 영역 데이터
         output_path: 저장 경로 (None이면 BytesIO 반환)
 
     Returns:
@@ -514,5 +627,6 @@ def create_damage_report_pdf(
         image_path=image_path,
         area=area,
         user_message=user_message,
+        damage_areas=damage_areas,
         output_path=output_path,
     )
