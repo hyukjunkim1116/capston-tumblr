@@ -10,10 +10,10 @@ import logging
 from pathlib import Path
 
 # 현재 디렉토리를 Python 경로에 추가
-sys.path.append(str(Path(__file__).parent))
+sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from app.yolo_trainer import train_custom_yolo
-from app.clip_trainer import train_clip_finetuning
+from train.yolo_trainer import train_custom_yolo
+from train.clip_trainer import train_clip_finetuning
 
 # 로깅 설정
 logging.basicConfig(
@@ -29,19 +29,21 @@ def check_requirements():
     """필수 요구사항 체크"""
     logger.info("🔍 필수 요구사항 체크 중...")
 
-    # 1. 데이터 폴더 체크
+    # 1. 데이터 폴더 체크 (프로젝트 루트에서 상대경로)
     required_paths = [
-        "../datasets/learning_data/learning_pictures",
-        "../datasets/learning_data/learning_texts.xlsx",
+        "train/datasets/learning_data/learning_pictures",
+        "train/datasets/learning_data/learning_texts.xlsx",
     ]
 
     for path in required_paths:
         if not Path(path).exists():
             logger.error(f"❌ 필수 데이터 없음: {path}")
             return False
+        else:
+            logger.info(f"✅ 데이터 확인됨: {path}")
 
     # 2. Python 패키지 체크
-    required_packages = ["torch", "ultralytics", "clip", "pandas", "PIL"]
+    required_packages = ["torch", "ultralytics", "pandas", "PIL"]
 
     for package in required_packages:
         try:
@@ -50,6 +52,14 @@ def check_requirements():
         except ImportError:
             logger.error(f"❌ {package} 설치 필요")
             return False
+
+    # CLIP은 선택사항으로 처리
+    try:
+        import clip
+
+        logger.info(f"✅ clip 설치됨")
+    except ImportError:
+        logger.warning(f"⚠️ clip 패키지 없음 (선택사항)")
 
     # 3. GPU 사용 가능 여부 체크
     try:

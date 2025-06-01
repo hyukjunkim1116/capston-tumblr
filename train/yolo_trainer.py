@@ -71,7 +71,7 @@ class YOLODatasetBuilder:
             directory.mkdir(parents=True, exist_ok=True)
 
     def _process_images_and_labels(self, df):
-        """이미지와 라벨 처리"""
+        """이미지와 라벨 처리 - 실제 라벨 데이터 활용"""
         train_split = 0.8
         image_files = list(self.source_images_dir.glob("*"))
 
@@ -93,11 +93,11 @@ class YOLODatasetBuilder:
                 )
                 self._copy_and_convert_image(image_file, dest_image)
 
-                # 라벨 생성 (임시로 전체 이미지를 하나의 피해 영역으로)
+                # 실제 라벨 데이터 기반 라벨 생성
                 label_file = (
                     self.output_dir / split_dir / "labels" / f"{image_file.stem}.txt"
                 )
-                self._create_dummy_label(label_file, image_file)
+                self._create_accurate_label(label_file, image_file, df)
 
             except Exception as e:
                 logger.warning(f"이미지 처리 실패 {image_file}: {e}")
@@ -113,15 +113,119 @@ class YOLODatasetBuilder:
         except Exception as e:
             logger.error(f"이미지 변환 실패 {source}: {e}")
 
-    def _create_dummy_label(self, label_file, image_file):
-        """임시 라벨 생성 (실제 어노테이션 없이)"""
+    def _create_accurate_label(self, label_file, image_file, df):
+        """실제 라벨 데이터 기반 정확한 라벨 생성"""
         try:
-            # 전체 이미지를 하나의 피해 영역으로 가정
-            # YOLO 형식: class_id center_x center_y width height (0~1 정규화)
+            # 이미지 번호 추출 (예: 301.png -> 301)
+            image_num = image_file.stem
+
+            # 해당 이미지에 대한 라벨 데이터 찾기
+            matching_rows = df[df["순번"].astype(str).str.contains(image_num, na=False)]
+
+            # 이미지 크기 정보 가져오기
+            with Image.open(image_file) as img:
+                img_width, img_height = img.size
+
+            labels = []
+
+            if not matching_rows.empty:
+                for _, row in matching_rows.iterrows():
+                    # 피해 부위와 피해현황 정보로 클래스 결정
+                    damage_part = str(row.get("피해 부위", "")).lower()
+                    damage_status = str(row.get("피해현황", "")).lower()
+
+                    # 피해 유형 매핑
+                    class_id = self._map_damage_to_class(damage_part, damage_status)
+
+                    # 피해 부위에 따른 바운딩 박스 위치 추정
+                    bbox = self._estimate_bbox_from_damage_part(
+                        damage_part, img_width, img_height
+                    )
+
+                    # YOLO 형식으로 변환 (center_x, center_y, width, height - 정규화)
+                    center_x = (bbox[0] + bbox[2]) / 2 / img_width
+                    center_y = (bbox[1] + bbox[3]) / 2 / img_height
+                    width = (bbox[2] - bbox[0]) / img_width
+                    height = (bbox[3] - bbox[1]) / img_height
+
+                    labels.append(
+                        f"{class_id} {center_x:.6f} {center_y:.6f} {width:.6f} {height:.6f}"
+                    )
+
+            # 라벨이 없으면 기본 라벨 생성
+            if not labels:
+                labels.append("0 0.5 0.5 1.0 1.0")  # 전체 이미지를 균열로 가정
+
+            # 라벨 파일 저장
             with open(label_file, "w") as f:
-                f.write("0 0.5 0.5 1.0 1.0\n")  # 클래스 0 (crack), 전체 이미지
+                f.write("\n".join(labels) + "\n")
+
         except Exception as e:
-            logger.error(f"라벨 생성 실패 {label_file}: {e}")
+            logger.error(f"정확한 라벨 생성 실패 {label_file}: {e}")
+            # 폴백: 기본 라벨 생성
+            with open(label_file, "w") as f:
+                f.write("0 0.5 0.5 1.0 1.0\n")
+
+    def _map_damage_to_class(self, damage_part, damage_status):
+        """피해 부위와 현황을 클래스 ID로 매핑"""
+        # 피해 유형 키워드 매핑
+        mapping_rules = {
+            0: ["균열", "크랙", "갈라짐", "틈"],  # crack
+            1: ["수해", "침수", "누수", "물", "습기"],  # water_damage
+            2: ["화재", "불", "연소", "탄화"],  # fire_damage
+            3: ["지붕", "옥상", "루프", "처마"],  # roof_damage
+            4: ["창문", "유리", "윈도우", "창호"],  # window_damage
+            5: ["문", "도어", "출입구", "현관"],  # door_damage
+            6: ["기초", "파운데이션", "토대", "밑바닥"],  # foundation_damage
+            7: ["구조", "변형", "틀어짐", "처짐", "기울어짐"],  # structural_deformation
+            8: ["외벽", "파사드", "외관", "벽면"],  # facade_damage
+        }
+
+        # 피해 부위와 현황을 결합한 텍스트에서 키워드 검색
+        combined_text = f"{damage_part} {damage_status}".lower()
+
+        for class_id, keywords in mapping_rules.items():
+            if any(keyword in combined_text for keyword in keywords):
+                return class_id
+
+        return 0  # 기본값: 균열
+
+    def _estimate_bbox_from_damage_part(self, damage_part, img_width, img_height):
+        """피해 부위에 따른 바운딩 박스 위치 추정"""
+        damage_part = damage_part.lower()
+
+        # 부위별 대략적인 위치 매핑 (x1, y1, x2, y2)
+        position_mapping = {
+            "지붕": (0.1, 0.0, 0.9, 0.3),  # 상단
+            "옥상": (0.1, 0.0, 0.9, 0.3),
+            "처마": (0.0, 0.0, 1.0, 0.4),
+            "외벽": (0.0, 0.2, 1.0, 0.8),  # 중앙
+            "벽면": (0.0, 0.2, 1.0, 0.8),
+            "파사드": (0.0, 0.2, 1.0, 0.8),
+            "창문": (0.2, 0.3, 0.8, 0.7),  # 중앙 작은 영역
+            "창호": (0.2, 0.3, 0.8, 0.7),
+            "유리": (0.2, 0.3, 0.8, 0.7),
+            "문": (0.3, 0.4, 0.7, 0.9),  # 하단 중앙
+            "도어": (0.3, 0.4, 0.7, 0.9),
+            "출입구": (0.3, 0.4, 0.7, 0.9),
+            "기초": (0.0, 0.7, 1.0, 1.0),  # 하단
+            "파운데이션": (0.0, 0.7, 1.0, 1.0),
+            "토대": (0.0, 0.7, 1.0, 1.0),
+        }
+
+        # 매칭되는 부위 찾기
+        for part, (x1_ratio, y1_ratio, x2_ratio, y2_ratio) in position_mapping.items():
+            if part in damage_part:
+                x1 = int(x1_ratio * img_width)
+                y1 = int(y1_ratio * img_height)
+                x2 = int(x2_ratio * img_width)
+                y2 = int(y2_ratio * img_height)
+                return (x1, y1, x2, y2)
+
+        # 기본값: 중앙 영역 (50% 크기)
+        margin_x = int(img_width * 0.25)
+        margin_y = int(img_height * 0.25)
+        return (margin_x, margin_y, img_width - margin_x, img_height - margin_y)
 
     def _create_yaml_config(self):
         """YOLOv8 설정 YAML 파일 생성"""

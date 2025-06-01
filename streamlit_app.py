@@ -76,16 +76,7 @@ def main():
             content_valid, content_message = validate_image_content(uploaded_file)
             if not content_valid:
                 st.error(content_message)
-                # 사용자 메시지는 이미 추가되었으므로 오류 메시지만 추가
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": content_message,
-                        "timestamp": datetime.now(),
-                        "response_type": "validation_error",
-                    }
-                )
-                st.rerun()
+                return
 
             # 3. 면적 입력 검증
             area_valid, area_message = validate_area_input(area_input)
@@ -99,7 +90,6 @@ def main():
                     uploaded_file.getvalue(), uploaded_file.name, upload_dir
                 )
 
-                # Analyze the damage using the modular analysis engine
                 analysis_result = analysis_engine.generate_comprehensive_analysis(
                     image_path=str(file_path),
                     area=area_input,

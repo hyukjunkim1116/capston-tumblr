@@ -9,6 +9,6 @@ names:
 - structural_deformation
 - facade_damage
 nc: 9
-path: /Users/kim/Desktop/2525-capston/tumblr/yolo_dataset
+path: /Users/kim/Desktop/2525-capston/tumblr/train/datasets/yolo_dataset
 train: train/images
 val: val/images

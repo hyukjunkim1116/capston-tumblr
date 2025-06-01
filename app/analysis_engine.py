@@ -37,16 +37,26 @@ except ImportError:
         "CLIP not available. Install with: pip install git+https://github.com/openai/CLIP.git"
     )
 
-# LangChain 관련
+# LangChain 관련 - 최신 패키지로 업데이트
 try:
-    from langchain.llms import OpenAI as LangChainOpenAI
+    from langchain_openai import OpenAI as LangChainOpenAI
     from langchain.chains import LLMChain
     from langchain.prompts import PromptTemplate
 
     LANGCHAIN_AVAILABLE = True
 except ImportError:
-    LANGCHAIN_AVAILABLE = False
-    logging.warning("LangChain not available. Install with: pip install langchain")
+    try:
+        # Fallback to community package
+        from langchain_community.llms import OpenAI as LangChainOpenAI
+        from langchain.chains import LLMChain
+        from langchain.prompts import PromptTemplate
+
+        LANGCHAIN_AVAILABLE = True
+    except ImportError:
+        LANGCHAIN_AVAILABLE = False
+        logging.warning(
+            "LangChain not available. Install with: pip install langchain-openai langchain-community"
+        )
 
 # 새로운 기준 데이터 매니저 import
 from app.criteria_loader import get_criteria_manager
@@ -351,7 +361,7 @@ class AnalysisEngine:
         sections = []
 
         # 1. 피해 현황
-        sections.append("## 피해 현황")
+        sections.append("피해 현황")
         sections.append(
             f"총 {basic_info['total_areas']}개 영역 중 {basic_info['total_damages']}개 피해 영역을 발견했습니다."
         )
@@ -361,19 +371,19 @@ class AnalysisEngine:
                 sections.append(f"• {area['name']}: {area['description']}")
 
         # 2. 복구 근거
-        sections.append("\n## 복구 근거")
+        sections.append("\n복구 근거")
         for area in damage_areas:
             if area["damage_type"] != "normal building":
                 sections.append(f"**{area['name']}**: {area['basis']}")
 
         # 3. 공정명
-        sections.append("\n## 복구 공정")
+        sections.append("\n복구 공정")
         for area in damage_areas:
             if area["damage_type"] != "normal building":
                 sections.append(f"**{area['name']}**: {area['process']}")
 
         # 4. 복구 예상 자재
-        sections.append("\n## 복구 예상 자재")
+        sections.append("\n복구 예상 자재")
         for area in damage_areas:
             if area["damage_type"] != "normal building":
                 sections.append(f"**{area['name']}**:")
@@ -387,7 +397,6 @@ class YOLODamageDetector:
     """YOLOv8 건물 피해 감지"""
 
     def __init__(self, model_path="train/models/custom_yolo_damage.pt"):
-        """커스텀 훈련된 모델 사용"""
         self.model_path = model_path
         self.model = None
         self._load_model()
@@ -395,52 +404,243 @@ class YOLODamageDetector:
     def _load_model(self):
         """YOLO 모델 로드"""
         try:
-            # 커스텀 훈련 모델 우선 로드
-            if Path(self.model_path).exists():
+            if YOLO_AVAILABLE and Path(self.model_path).exists():
                 self.model = YOLO(self.model_path)
-                logger.info(f"커스텀 YOLOv8 모델 로드: {self.model_path}")
+                logger.info(f"커스텀 YOLO 모델 로드: {self.model_path}")
             else:
-                # 폴백: 기본 모델
-                self.model = YOLO("yolov8n.pt")
-                logger.warning("커스텀 모델 없음, 기본 YOLOv8 사용")
+                logger.warning("커스텀 모델 없음, 기본 모델 사용")
+                if YOLO_AVAILABLE:
+                    self.model = YOLO("yolov8n.pt")
+                else:
+                    logger.error("YOLO 모델 로드 실패")
+                    self.model = None
         except Exception as e:
-            logger.error(f"YOLO 모델 로드 실패: {e}")
-            # 최종 폴백
-            self.model = YOLO("yolov8n.pt")
+            logger.error(f"YOLO 모델 로드 오류: {e}")
+            self.model = None
 
-    def detect_damage_areas(self, image_path: str) -> List[Dict]:
-        """이미지에서 피해 영역 감지"""
+    def detect_damage_areas(self, image_path: str, use_tta: bool = True) -> List[Dict]:
+        """
+        건물 피해 영역 감지 (TTA 적용 가능)
+
+        Args:
+            image_path: 이미지 경로
+            use_tta: Test Time Augmentation 사용 여부
+        """
         if not self.model:
+            logger.warning("YOLO 모델 없음, 폴백 감지 사용")
             return self._fallback_detection(image_path)
 
         try:
-            # YOLOv8 추론
-            results = self.model(image_path)
-
-            damage_areas = []
-            for result in results:
-                boxes = result.boxes
-                if boxes is not None:
-                    for i, box in enumerate(boxes):
-                        # 바운딩 박스 좌표
-                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                        confidence = box.conf[0].cpu().numpy()
-                        class_id = int(box.cls[0].cpu().numpy())
-
-                        damage_areas.append(
-                            {
-                                "bbox": [int(x1), int(y1), int(x2), int(y2)],
-                                "confidence": float(confidence),
-                                "class_id": class_id,
-                                "area_id": f"damage_area_{i}",
-                            }
-                        )
-
-            return damage_areas
-
+            if use_tta:
+                return self._detect_with_tta(image_path)
+            else:
+                return self._detect_single(image_path)
         except Exception as e:
             logger.error(f"YOLO 감지 오류: {e}")
             return self._fallback_detection(image_path)
+
+    def _detect_single(self, image_path: str) -> List[Dict]:
+        """단일 이미지 감지"""
+        results = self.model(image_path, conf=0.3)
+        detections = []
+
+        for r in results:
+            boxes = r.boxes
+            if boxes is not None:
+                for i, box in enumerate(boxes):
+                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                    confidence = float(box.conf[0].cpu().numpy())
+                    class_id = int(box.cls[0].cpu().numpy())
+
+                    detections.append(
+                        {
+                            "bbox": [int(x1), int(y1), int(x2), int(y2)],
+                            "confidence": confidence,
+                            "class_id": class_id,
+                            "area_id": f"area_{i}",
+                        }
+                    )
+
+        return detections if detections else self._fallback_detection(image_path)
+
+    def _detect_with_tta(self, image_path: str) -> List[Dict]:
+        """TTA를 사용한 감지 (여러 증강 이미지의 결과 앙상블)"""
+        from PIL import Image, ImageEnhance, ImageOps
+        import numpy as np
+        import tempfile
+        import os
+
+        # 원본 이미지 로드
+        original_image = Image.open(image_path)
+
+        # TTA 변형 설정
+        augmentations = [
+            ("original", lambda img: img),  # 원본
+            (
+                "flip_horizontal",
+                lambda img: img.transpose(Image.FLIP_LEFT_RIGHT),
+            ),  # 좌우 반전
+            (
+                "brightness_up",
+                lambda img: ImageEnhance.Brightness(img).enhance(1.2),
+            ),  # 밝기 증가
+            (
+                "brightness_down",
+                lambda img: ImageEnhance.Brightness(img).enhance(0.8),
+            ),  # 밝기 감소
+            (
+                "contrast_up",
+                lambda img: ImageEnhance.Contrast(img).enhance(1.2),
+            ),  # 대비 증가
+            (
+                "contrast_down",
+                lambda img: ImageEnhance.Contrast(img).enhance(0.8),
+            ),  # 대비 감소
+            ("rotate_5", lambda img: img.rotate(5, expand=True)),  # 5도 회전
+            ("rotate_-5", lambda img: img.rotate(-5, expand=True)),  # -5도 회전
+        ]
+
+        all_detections = []
+
+        for aug_name, aug_func in augmentations:
+            try:
+                # 증강 이미지 생성
+                aug_image = aug_func(original_image.copy())
+
+                # 임시 파일로 저장
+                with tempfile.NamedTemporaryFile(
+                    suffix=".jpg", delete=False
+                ) as tmp_file:
+                    aug_image.save(tmp_file.name, "JPEG")
+                    tmp_path = tmp_file.name
+
+                # 감지 실행
+                results = self.model(tmp_path, conf=0.25)  # TTA에서는 confidence 낮게
+
+                # 결과 처리
+                for r in results:
+                    boxes = r.boxes
+                    if boxes is not None:
+                        for box in boxes:
+                            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                            confidence = float(box.conf[0].cpu().numpy())
+                            class_id = int(box.cls[0].cpu().numpy())
+
+                            # 좌우 반전의 경우 bbox 좌표 보정
+                            if aug_name == "flip_horizontal":
+                                img_width = aug_image.width
+                                x1, x2 = img_width - x2, img_width - x1
+
+                            detection = {
+                                "bbox": [int(x1), int(y1), int(x2), int(y2)],
+                                "confidence": confidence,
+                                "class_id": class_id,
+                                "augmentation": aug_name,
+                            }
+                            all_detections.append(detection)
+
+                # 임시 파일 삭제
+                os.unlink(tmp_path)
+
+            except Exception as e:
+                logger.warning(f"TTA 증강 '{aug_name}' 실패: {e}")
+                continue
+
+        # NMS 적용하여 중복 제거 및 앙상블
+        ensemble_detections = self._ensemble_detections(all_detections)
+
+        return (
+            ensemble_detections
+            if ensemble_detections
+            else self._fallback_detection(image_path)
+        )
+
+    def _ensemble_detections(self, all_detections: List[Dict]) -> List[Dict]:
+        """여러 TTA 결과를 앙상블하여 최종 감지 결과 생성"""
+        if not all_detections:
+            return []
+
+        # IoU 기반 클러스터링
+        clusters = []
+        iou_threshold = 0.5
+
+        for detection in all_detections:
+            bbox = detection["bbox"]
+            assigned = False
+
+            for cluster in clusters:
+                # 클러스터 내 첫 번째 detection과 IoU 계산
+                cluster_bbox = cluster[0]["bbox"]
+                iou = self._calculate_iou(bbox, cluster_bbox)
+
+                if iou > iou_threshold:
+                    cluster.append(detection)
+                    assigned = True
+                    break
+
+            if not assigned:
+                clusters.append([detection])
+
+        # 각 클러스터에서 평균값 계산
+        ensemble_results = []
+        for i, cluster in enumerate(clusters):
+            if len(cluster) < 2:  # 최소 2개 이상의 감지에서 동의해야 함
+                continue
+
+            # 클러스터 내 평균 계산
+            avg_bbox = self._average_bbox([d["bbox"] for d in cluster])
+            avg_confidence = np.mean([d["confidence"] for d in cluster])
+            most_common_class = max(
+                set([d["class_id"] for d in cluster]),
+                key=[d["class_id"] for d in cluster].count,
+            )
+
+            # 신뢰도 보정 (여러 모델에서 동의할수록 높은 신뢰도)
+            consensus_boost = min(len(cluster) / len(augmentations), 1.0) * 0.2
+            final_confidence = min(avg_confidence + consensus_boost, 1.0)
+
+            ensemble_results.append(
+                {
+                    "bbox": avg_bbox,
+                    "confidence": final_confidence,
+                    "class_id": most_common_class,
+                    "area_id": f"tta_area_{i}",
+                    "consensus_count": len(cluster),
+                }
+            )
+
+        return ensemble_results
+
+    def _calculate_iou(self, bbox1: List[int], bbox2: List[int]) -> float:
+        """두 바운딩 박스의 IoU 계산"""
+        x1_1, y1_1, x2_1, y2_1 = bbox1
+        x1_2, y1_2, x2_2, y2_2 = bbox2
+
+        # 교집합 영역 계산
+        x1_i = max(x1_1, x1_2)
+        y1_i = max(y1_1, y1_2)
+        x2_i = min(x2_1, x2_2)
+        y2_i = min(y2_1, y2_2)
+
+        if x2_i <= x1_i or y2_i <= y1_i:
+            return 0.0
+
+        intersection = (x2_i - x1_i) * (y2_i - y1_i)
+
+        # 합집합 영역 계산
+        area1 = (x2_1 - x1_1) * (y2_1 - y1_1)
+        area2 = (x2_2 - x1_2) * (y2_2 - y1_2)
+        union = area1 + area2 - intersection
+
+        return intersection / union if union > 0 else 0.0
+
+    def _average_bbox(self, bboxes: List[List[int]]) -> List[int]:
+        """바운딩 박스들의 평균 계산"""
+        import numpy as np
+
+        bboxes_array = np.array(bboxes)
+        avg_bbox = np.mean(bboxes_array, axis=0)
+        return [int(coord) for coord in avg_bbox]
 
     def _fallback_detection(self, image_path: str) -> List[Dict]:
         """YOLO 실패 시 폴백 감지"""
@@ -467,22 +667,39 @@ class CLIPDamageClassifier:
         """Fine-tuned CLIP 모델 사용"""
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.custom_model_path = custom_model_path
+        self.model = None
+        self.preprocess = None
 
         try:
             # Fine-tuned 모델 우선 로드
             if self.custom_model_path and Path(self.custom_model_path).exists():
-                self.model, self.preprocess = clip.load(
-                    self.custom_model_path, device=self.device
-                )
-                logger.info(f"Fine-tuned CLIP 모델 로드: {self.custom_model_path}")
+                try:
+                    self.model, self.preprocess = clip.load(
+                        self.custom_model_path, device=self.device
+                    )
+                    logger.info(f"Fine-tuned CLIP 모델 로드: {self.custom_model_path}")
+                except Exception as e:
+                    logger.warning(f"Fine-tuned 모델 로드 실패, 기본 모델 사용: {e}")
+                    self.model, self.preprocess = clip.load(
+                        "ViT-B/32", device=self.device
+                    )
             else:
-                self.model, self.preprocess = clip.load("ViT-B/32", device=self.device)
-                logger.warning("Fine-tuned 모델 없음, 기본 CLIP 사용")
+                logger.info("Fine-tuned 모델 없음, 기본 CLIP 사용")
+                if CLIP_AVAILABLE:
+                    self.model, self.preprocess = clip.load(
+                        "ViT-B/32", device=self.device
+                    )
+                    logger.info("기본 CLIP 모델 로드 완료")
+                else:
+                    logger.error("CLIP 라이브러리 없음")
+                    self.model = None
+                    self.preprocess = None
 
         except Exception as e:
             logger.error(f"CLIP 모델 로드 실패: {e}")
-            # 최종 폴백
-            self.model, self.preprocess = clip.load("ViT-B/32", device=self.device)
+            # 최종 폴백: 모델 없이 진행
+            self.model = None
+            self.preprocess = None
 
     def classify_damage_type(self, image_crop: Image.Image) -> Dict[str, float]:
         """크롭된 이미지의 피해 유형 분류"""
