@@ -20,4 +20,14 @@ secondaryBackgroundColor = "#f0f2f6"
 textColor = "#262730"
 
 [logger]
-level = "warning" 
+level = "warning"
+
+# 배포 환경 최적화
+[client]
+showErrorDetails = false
+
+# 메모리 사용량 최적화
+[runner]
+magicEnabled = false
+installTracer = false
+fixMatplotlib = false 

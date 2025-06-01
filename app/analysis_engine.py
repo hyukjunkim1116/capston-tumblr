@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Dict, Any, List, Tuple
 from PIL import Image, ImageDraw
 import torch
-import cv2
 import os
 from openai import OpenAI
 from datetime import datetime
