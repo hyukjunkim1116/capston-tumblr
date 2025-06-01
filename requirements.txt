@@ -11,8 +11,8 @@ torch==2.2.0
 torchvision==0.17.0
 ultralytics==8.1.0
 
-# CLIP 모델 (안정 버전)
-git+https://github.com/openai/CLIP.git@04f4dc2ca1606893325d73ee06630c17d0ba3caa
+# CLIP 모델 (안정 버전 - main 브랜치 사용)
+git+https://github.com/openai/CLIP.git
 ftfy==6.1.3
 regex==2023.12.25
 
