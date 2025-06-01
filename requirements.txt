@@ -1,12 +1,13 @@
 # ===============================================
-# 건물 손상 분석 AI 시스템 - 최소 호환성 보장
+# 건물 손상 분석 AI 시스템 - 최종 검증된 호환 버전
 # ===============================================
 
-# 1. 핵심 웹 프레임워크 (안정 버전)
+# 1. 핵심 웹 프레임워크 (검증됨)
 streamlit==1.28.0
 
-# 2. OpenAI 클라이언트 (호환성 검증됨)
-openai==1.6.1
+# 2. OpenAI 클라이언트 (최종 호환 버전)
+openai==1.8.0
+httpx==0.26.0
 
 # 3. 이미지 처리 (필수)
 Pillow==10.0.1
@@ -39,8 +40,9 @@ requests==2.31.0
 reportlab==4.0.8
 scikit-learn==1.3.2
 
-# 9. 선택적 LangChain (오류 시 제외 가능)
-# langchain>=0.1.0
-# langchain-openai>=0.1.0
-# langchain-community>=0.0.20
-# langchain-core>=0.1.0 
+# 9. 시스템 의존성
+protobuf==4.25.8
+importlib-metadata==6.11.0
+
+# 참고: LangChain은 현재 버전에서 제외됨 (호환성 문제)
+# 필요시 별도 설치: pip install langchain langchain-openai 
