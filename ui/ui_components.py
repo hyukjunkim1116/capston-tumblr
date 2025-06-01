@@ -1,7 +1,6 @@
 import streamlit as st
 import os
 from dotenv import load_dotenv
-from datetime import datetime
 
 # .env 파일에서 환경변수 로드
 load_dotenv()
@@ -66,7 +65,6 @@ def render_simple_chatgpt_ui():
     .main > .block-container {
         max-width: 900px !important;
         margin: 0 auto !important;
-        background-color: #212121 !important;
     }
     
     

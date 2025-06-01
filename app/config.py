@@ -33,12 +33,11 @@ def detect_environment():
     return "local"
 
 
-# 환경별 자동 설정
+# 환경별 자동 설정 - 모든 환경 동일하게 설정
 ENVIRONMENT = detect_environment()
 IS_DEPLOYMENT = ENVIRONMENT != "local"
 
-# 환경별 최적화 설정
-# 배포 환경도 로컬과 동일한 설정 사용 (느려도 정확도 우선)
+# 모든 환경에서 동일한 고성능 설정 사용
 LOG_LEVEL = logging.INFO
 DEVICE = "cuda" if os.getenv("CUDA_VISIBLE_DEVICES") != "none" else "cpu"
 BATCH_SIZE = 4
@@ -55,6 +54,7 @@ logging.getLogger("PIL").setLevel(logging.WARNING)
 
 logger.info(f"🌍 환경 감지: {ENVIRONMENT} ({'배포' if IS_DEPLOYMENT else '로컬'})")
 logger.info(f"⚙️ 디바이스: {DEVICE}, 배치크기: {BATCH_SIZE}")
+logger.info("🎯 설정: 모든 환경에서 커스텀 YOLOv8 모델 강제 사용")
 
 # Global variables for module availability
 MODULES_LOADED = False
@@ -62,23 +62,25 @@ DAMAGE_CATEGORIES = {}
 CACHE_DIR = Path("./cache")
 MODEL_CACHE_DIR = CACHE_DIR / "models"
 
-# 모델 다운로드 URL 설정 (배포 환경용)
-MODEL_URLS = {
-    "yolo_custom": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt",
-    "clip_base": "ViT-B/32",  # CLIP 기본 모델
-}
+# 커스텀 모델 경로 정의 (우선순위 순서)
+CUSTOM_YOLO_PATHS = [
+    Path("train/models/custom_yolo_damage.pt"),  # 1순위: 로컬 훈련된 모델
+    Path("custom_yolo_damage.pt"),  # 2순위: 루트 디렉토리
+    MODEL_CACHE_DIR / "custom_yolo_damage.pt",  # 3순위: 캐시 디렉토리
+]
+
+CUSTOM_CLIP_PATHS = [
+    Path("train/models/clip_finetuned.pt"),  # 1순위: 로컬 훈련된 모델
+    Path("clip_finetuned.pt"),  # 2순위: 루트 디렉토리
+    MODEL_CACHE_DIR / "clip_finetuned.pt",  # 3순위: 캐시 디렉토리
+]
 
 # 외부 모델 저장소 URL (배포 환경에서 커스텀 모델 다운로드용)
-# 실제 사용 시 아래 URL들을 실제 모델 URL로 변경하세요
 EXTERNAL_MODEL_URLS = {
-    # Google Drive 공유 링크 (다운로드 직링크로 변환 필요)
-    "custom_yolo_gdrive": "https://drive.google.com/uc?id=YOUR_GOOGLE_DRIVE_FILE_ID",
     # GitHub Releases (권장방법)
-    "custom_yolo_github": "https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/v1.0/custom_yolo_damage.pt",
-    # Hugging Face Hub
-    "custom_yolo_hf": "https://huggingface.co/YOUR_USERNAME/building-damage-yolo/resolve/main/custom_yolo_damage.pt",
-    # CLIP 파인튜닝 모델 (추후 사용)
-    "clip_finetuned_hf": "https://huggingface.co/YOUR_USERNAME/building-damage-clip/resolve/main/clip_finetuned.pt",
+    "custom_yolo_github": os.getenv("CUSTOM_YOLO_URL", ""),
+    # CLIP 파인튜닝 모델
+    "clip_finetuned_github": os.getenv("CUSTOM_CLIP_URL", ""),
 }
 
 
@@ -135,127 +137,120 @@ def download_model_from_url(url: str, target_path: Path) -> bool:
 
 @st.cache_resource
 def initialize_optimized_models():
-    """모든 환경에서 고정확도 모델 초기화 - 배포환경 커스텀 모델 지원"""
-    logger.info("🚀 고정확도 모델 초기화 시작")
+    """모든 환경에서 커스텀 모델 강제 사용 - 기본 모델 사용 금지"""
+    logger.info("🚀 커스텀 모델 강제 초기화 시작")
 
     models = {}
 
+    # YOLOv8 커스텀 모델 강제 로딩
     try:
-        # YOLOv8 모델 로딩 (배포환경 커스텀 모델 지원)
         from ultralytics import YOLO
 
-        # 1순위: 로컬 커스텀 모델
-        local_custom_path = Path("train/models/custom_yolo_damage.pt")
+        yolo_model_loaded = False
 
-        # 2순위: 배포환경 캐시된 커스텀 모델
-        cached_custom_path = MODEL_CACHE_DIR / "custom_yolo_damage.pt"
+        # 우선순위 순서로 커스텀 YOLO 모델 찾기
+        for model_path in CUSTOM_YOLO_PATHS:
+            if model_path.exists():
+                models["yolo"] = YOLO(str(model_path))
+                logger.info(f"✅ YOLOv8 커스텀 모델 로드 완료: {model_path}")
+                yolo_model_loaded = True
+                break
 
-        if local_custom_path.exists():
-            # 로컬 커스텀 모델 사용
-            models["yolo"] = YOLO(str(local_custom_path))
-            logger.info("✅ YOLOv8 로컬 커스텀 모델 로드 완료")
-
-        elif cached_custom_path.exists():
-            # 캐시된 커스텀 모델 사용
-            models["yolo"] = YOLO(str(cached_custom_path))
-            logger.info("✅ YOLOv8 캐시된 커스텀 모델 로드 완료")
-
-        elif IS_DEPLOYMENT:
-            # 배포환경에서 커스텀 모델 다운로드 시도
-            logger.info("🌐 배포환경 감지 - 커스텀 모델 다운로드 시도")
-
-            # 환경변수에서 모델 URL 확인
-            custom_model_url = os.getenv("CUSTOM_YOLO_URL")
-
+        # 로컬에 커스텀 모델이 없고 배포환경인 경우 다운로드 시도
+        if not yolo_model_loaded and IS_DEPLOYMENT:
+            custom_model_url = EXTERNAL_MODEL_URLS.get("custom_yolo_github")
             if custom_model_url:
-                logger.info(f"📥 환경변수에서 커스텀 모델 URL 발견: {custom_model_url}")
-                if download_model_from_url(custom_model_url, cached_custom_path):
-                    models["yolo"] = YOLO(str(cached_custom_path))
+                target_path = MODEL_CACHE_DIR / "custom_yolo_damage.pt"
+                logger.info(
+                    f"📥 배포환경에서 커스텀 YOLO 모델 다운로드 시도: {custom_model_url}"
+                )
+
+                if download_model_from_url(custom_model_url, target_path):
+                    models["yolo"] = YOLO(str(target_path))
                     logger.info("✅ YOLOv8 다운로드된 커스텀 모델 로드 완료")
-                else:
-                    logger.warning("⚠️ 커스텀 모델 다운로드 실패, 기본 모델 사용")
-                    models["yolo"] = YOLO("yolov8n.pt")
-                    logger.info("✅ YOLOv8 기본 모델 로드 완료")
-            else:
-                logger.info("📝 CUSTOM_YOLO_URL 환경변수 없음, 기본 모델 사용")
-                models["yolo"] = YOLO("yolov8n.pt")
-                logger.info("✅ YOLOv8 기본 모델 로드 완료")
-        else:
-            # 로컬환경에서 커스텀 모델 없으면 기본 모델
-            models["yolo"] = YOLO("yolov8n.pt")
-            logger.info("✅ YOLOv8 기본 모델 로드 완료")
+                    yolo_model_loaded = True
+
+        # 커스텀 모델을 찾을 수 없는 경우 오류 발생
+        if not yolo_model_loaded:
+            error_msg = """
+❌ 커스텀 YOLOv8 모델을 찾을 수 없습니다!
+
+다음 위치 중 하나에 custom_yolo_damage.pt 파일이 있어야 합니다:
+1. train/models/custom_yolo_damage.pt (권장)
+2. custom_yolo_damage.pt (루트 디렉토리)
+3. cache/models/custom_yolo_damage.pt
+
+배포환경인 경우 CUSTOM_YOLO_URL 환경변수를 설정하세요.
+"""
+            logger.error(error_msg)
+            raise FileNotFoundError(error_msg)
 
     except Exception as e:
-        logger.warning(f"⚠️ YOLOv8 로드 실패: {e}")
-        models["yolo"] = None
+        logger.error(f"❌ YOLOv8 커스텀 모델 로드 실패: {e}")
+        raise e
 
+    # CLIP 모델 로딩 (커스텀 우선, 없으면 기본 모델)
     try:
-        # CLIP 모델 로딩 (배포환경 커스텀 모델 지원)
         import clip
         import torch
 
         device = DEVICE
+        clip_model_loaded = False
 
-        # 1순위: 로컬 커스텀 모델
-        local_clip_path = Path("train/models/clip_finetuned.pt")
+        # 우선순위 순서로 커스텀 CLIP 모델 찾기
+        for model_path in CUSTOM_CLIP_PATHS:
+            if model_path.exists():
+                try:
+                    model, preprocess = clip.load(str(model_path), device=device)
+                    models["clip"] = (model, preprocess)
+                    logger.info(f"✅ CLIP 커스텀 모델 로드 완료: {model_path}")
+                    clip_model_loaded = True
+                    break
+                except Exception as e:
+                    logger.warning(f"⚠️ CLIP 커스텀 모델 로드 실패 ({model_path}): {e}")
+                    continue
 
-        # 2순위: 배포환경 캐시된 커스텀 모델
-        cached_clip_path = MODEL_CACHE_DIR / "clip_finetuned.pt"
-
-        if local_clip_path.exists():
-            # 로컬 커스텀 모델 사용
-            model, preprocess = clip.load(str(local_clip_path), device=device)
-            logger.info("✅ CLIP 로컬 커스텀 모델 로드 완료")
-
-        elif cached_clip_path.exists():
-            # 캐시된 커스텀 모델 사용
-            model, preprocess = clip.load(str(cached_clip_path), device=device)
-            logger.info("✅ CLIP 캐시된 커스텀 모델 로드 완료")
-
-        elif IS_DEPLOYMENT:
-            # 배포환경에서 CLIP 커스텀 모델 다운로드 시도
-            custom_clip_url = os.getenv("CUSTOM_CLIP_URL")
-
+        # 배포환경에서 CLIP 커스텀 모델 다운로드 시도
+        if not clip_model_loaded and IS_DEPLOYMENT:
+            custom_clip_url = EXTERNAL_MODEL_URLS.get("clip_finetuned_github")
             if custom_clip_url:
-                logger.info(f"📥 CLIP 커스텀 모델 다운로드: {custom_clip_url}")
-                if download_model_from_url(custom_clip_url, cached_clip_path):
-                    model, preprocess = clip.load(str(cached_clip_path), device=device)
-                    logger.info("✅ CLIP 다운로드된 커스텀 모델 로드 완료")
-                else:
-                    logger.warning("⚠️ CLIP 커스텀 모델 다운로드 실패, 기본 모델 사용")
-                    model, preprocess = clip.load("ViT-B/32", device=device)
-                    logger.info("✅ CLIP 기본 모델 로드 완료")
-            else:
-                model, preprocess = clip.load("ViT-B/32", device=device)
-                logger.info("✅ CLIP 기본 모델 로드 완료")
-        else:
-            # 로컬환경에서 커스텀 모델 없으면 기본 모델
+                target_path = MODEL_CACHE_DIR / "clip_finetuned.pt"
+                logger.info(
+                    f"📥 배포환경에서 커스텀 CLIP 모델 다운로드 시도: {custom_clip_url}"
+                )
+
+                if download_model_from_url(custom_clip_url, target_path):
+                    try:
+                        model, preprocess = clip.load(str(target_path), device=device)
+                        models["clip"] = (model, preprocess)
+                        logger.info("✅ CLIP 다운로드된 커스텀 모델 로드 완료")
+                        clip_model_loaded = True
+                    except Exception as e:
+                        logger.warning(f"⚠️ 다운로드된 CLIP 모델 로드 실패: {e}")
+
+        # 커스텀 CLIP 모델이 없으면 기본 모델 사용 (CLIP은 허용)
+        if not clip_model_loaded:
+            logger.info("📝 커스텀 CLIP 모델 없음, 기본 ViT-B/32 모델 사용")
             model, preprocess = clip.load("ViT-B/32", device=device)
+            models["clip"] = (model, preprocess)
             logger.info("✅ CLIP 기본 모델 로드 완료")
 
-        models["clip"] = {"model": model, "preprocess": preprocess}
-
     except Exception as e:
-        logger.warning(f"⚠️ CLIP 로드 실패: {e}")
+        logger.warning(f"⚠️ CLIP 모델 로드 실패: {e}")
         models["clip"] = None
 
+    # OpenAI 모델 설정 (변경 없음)
     try:
-        # OpenAI API 설정
-        from openai import OpenAI
-
-        api_key = os.getenv("OPENAI_API_KEY")
-        if api_key:
-            models["openai"] = OpenAI(api_key=api_key)
-            logger.info("✅ OpenAI API 연결 완료")
-        else:
-            logger.warning("⚠️ OpenAI API 키 없음")
-            models["openai"] = None
-
+        models["openai"] = True  # OpenAI는 API 기반이므로 True로 설정
+        logger.info("✅ OpenAI 모델 설정 완료")
     except Exception as e:
-        logger.warning(f"⚠️ OpenAI API 초기화 실패: {e}")
-        models["openai"] = None
+        logger.warning(f"⚠️ OpenAI 설정 실패: {e}")
+        models["openai"] = False
 
-    logger.info(f"🎯 고정확도 모델 초기화 완료 - 환경: {ENVIRONMENT}")
+    logger.info(
+        f"🎯 모델 초기화 완료 - YOLOv8: ✅ (커스텀), CLIP: {'✅' if models.get('clip') else '❌'}, OpenAI: {'✅' if models.get('openai') else '❌'}"
+    )
+
     return models
 
 

@@ -110,22 +110,22 @@ class AnalysisEngine:
     """통합 분석 엔진 - 환경별 최적화"""
 
     def __init__(self):
-        """분석 엔진 초기화 - 모든 환경에서 고정확도 설정"""
+        """분석 엔진 초기화 - 모든 환경에서 동일한 고성능 설정"""
         logger.info("🚀 AnalysisEngine 초기화 시작")
 
         # 시작 시간 기록
         self.start_time = time.time()
 
-        # 환경 설정 확인 (하지만 모든 환경에서 동일한 고성능 설정)
+        # 모든 환경에서 동일한 고성능 설정
         self.config = APP_CONFIG
         self.device = DEVICE
-        self.is_deployment = IS_DEPLOYMENT  # 환경 구분용으로만 사용
+        self.is_deployment = IS_DEPLOYMENT  # 로깅용으로만 사용
         self.max_image_size = MAX_IMAGE_SIZE  # 모든 환경에서 2048
 
         # 공유 모델 인스턴스 사용 (메모리 절약)
         self.shared_models = get_shared_models()
 
-        # 각 모듈 초기화 (모델 재사용)
+        # 각 모듈 초기화 (모델 재사용) - 모든 환경에서 고성능 설정
         self.yolo_model = OptimizedYOLODetector(self.shared_models.get("yolo"))
         self.clip_model = OptimizedCLIPClassifier(self.shared_models.get("clip"))
         self.gpt_model = OptimizedGPTGenerator(self.shared_models.get("openai"))
@@ -136,7 +136,10 @@ class AnalysisEngine:
         self.data_processor = DataProcessor()
 
         init_time = time.time() - self.start_time
-        logger.info(f"✅ AnalysisEngine 초기화 완료 ({init_time:.2f}초)")
+        logger.info(
+            f"✅ AnalysisEngine 초기화 완료 ({init_time:.2f}초) - 환경: {self.device}"
+        )
+        logger.info("🎯 설정: 모든 환경에서 커스텀 모델 사용 강제")
 
     @st.cache_data
     def generate_comprehensive_analysis(
@@ -473,42 +476,44 @@ class AnalysisEngine:
 
 
 class OptimizedYOLODetector:
-    """환경별 최적화된 YOLOv8 건물 피해 감지"""
+    """모든 환경에서 동일한 고성능 YOLOv8 건물 피해 감지"""
 
     def __init__(self, shared_model=None):
         """공유 모델 인스턴스 사용"""
         self.model = shared_model
         self.device = DEVICE
-        self.is_deployment = IS_DEPLOYMENT
 
         if self.model:
-            logger.info("✅ YOLO 모델 공유 인스턴스 사용")
+            logger.info("✅ YOLO 커스텀 모델 공유 인스턴스 사용")
         else:
-            logger.warning("⚠️ YOLO 모델 없음, fallback 모드")
+            logger.error("❌ YOLO 커스텀 모델 없음 - 시스템 중단")
+            raise ValueError("커스텀 YOLO 모델이 필요합니다")
 
     def detect_damage_areas(self, image_path: str, use_tta: bool = True) -> List[Dict]:
-        """모든 환경에서 고정확도 피해 영역 감지"""
+        """모든 환경에서 동일한 고성능 피해 영역 감지"""
         if not self.model:
-            return self._fallback_detection(image_path)
+            logger.error("❌ YOLO 모델 없음")
+            raise ValueError("YOLO 모델이 로드되지 않았습니다")
 
         try:
-            # 모든 환경에서 고정확도 설정 사용
+            # 모든 환경에서 동일한 고성능 설정 사용
             return self._detect_with_high_accuracy(image_path, use_tta)
 
         except Exception as e:
             logger.error(f"❌ YOLO 감지 오류: {e}")
-            return self._fallback_detection(image_path)
+            # 폴백 대신 에러 발생 (커스텀 모델 강제)
+            raise e
 
     def _detect_with_high_accuracy(
         self, image_path: str, use_tta: bool = True
     ) -> List[Dict]:
-        """고정확도 감지 (모든 환경에서 동일한 설정)"""
-        # 고정확도 설정
+        """고성능 감지 - 모든 환경에서 동일한 설정"""
+        # 모든 환경에서 동일한 고성능 설정
         conf_threshold = 0.3  # 낮은 임계값으로 더 많은 감지
         max_det = 50  # 더 많은 감지 허용
 
         if use_tta:
-            # TTA 적용 시 여러 추론 결과 종합
+            # TTA 적용 - 모든 환경에서 활성화
             results_list = []
 
             # 원본 이미지
@@ -568,14 +573,19 @@ class OptimizedYOLODetector:
                             "bbox": [int(x1), int(y1), int(x2), int(y2)],
                             "confidence": confidence,
                             "class_id": class_id,
-                            "area_id": f"high_accuracy_area_{i}",
+                            "area_id": f"custom_yolo_area_{i}",
                         }
                     )
 
-        return detections if detections else self._fallback_detection(image_path)
+        if not detections:
+            # 최소한의 폴백 (전체 이미지)
+            logger.warning("⚠️ YOLO에서 감지된 피해 없음, 전체 이미지 분석")
+            return self._minimal_fallback_detection(image_path)
 
-    def _fallback_detection(self, image_path: str) -> List[Dict]:
-        """모델 실패 시 폴백 감지"""
+        return detections
+
+    def _minimal_fallback_detection(self, image_path: str) -> List[Dict]:
+        """최소한의 폴백 감지 (전체 이미지만)"""
         try:
             with Image.open(image_path) as img:
                 w, h = img.size
@@ -584,7 +594,7 @@ class OptimizedYOLODetector:
                         "bbox": [0, 0, w, h],
                         "confidence": 0.6,
                         "class_id": 0,
-                        "area_id": "fallback_full_image",
+                        "area_id": "full_image_analysis",
                     }
                 ]
         except:
@@ -593,22 +603,20 @@ class OptimizedYOLODetector:
                     "bbox": [0, 0, 800, 600],
                     "confidence": 0.5,
                     "class_id": 0,
-                    "area_id": "fallback_default",
+                    "area_id": "default_analysis",
                 }
             ]
 
 
 class OptimizedCLIPClassifier:
-    """환경별 최적화된 CLIP 기반 피해 유형 분류"""
+    """모든 환경에서 동일한 고성능 CLIP 기반 피해 유형 분류"""
 
     def __init__(self, shared_model_data=None):
         """공유 모델 인스턴스 사용"""
         self.device = DEVICE
-        self.is_deployment = IS_DEPLOYMENT
 
-        if shared_model_data:
-            self.model = shared_model_data.get("model")
-            self.preprocess = shared_model_data.get("preprocess")
+        if shared_model_data and len(shared_model_data) == 2:
+            self.model, self.preprocess = shared_model_data
             logger.info("✅ CLIP 모델 공유 인스턴스 사용")
         else:
             self.model = None
@@ -616,17 +624,17 @@ class OptimizedCLIPClassifier:
             logger.warning("⚠️ CLIP 모델 없음, fallback 모드")
 
     def classify_damage_type(self, image_crop: Image.Image) -> Dict[str, float]:
-        """모든 환경에서 고정확도 피해 유형 분류"""
+        """모든 환경에서 동일한 고성능 피해 유형 분류"""
         if not self.model:
             return self._fallback_classification()
 
         try:
-            # 모든 환경에서 고해상도 처리
+            # 모든 환경에서 동일한 고해상도 처리
             image_crop = image_crop.resize((224, 224), Image.Resampling.LANCZOS)
 
             image_input = self.preprocess(image_crop).unsqueeze(0).to(self.device)
 
-            # 모든 피해 유형 분류 (제한 없음)
+            # 모든 환경에서 전체 피해 유형 분류 (제한 없음)
             damage_types = DAMAGE_TYPES  # 전체 피해 유형 사용
             text_inputs = torch.cat(
                 [
@@ -696,12 +704,11 @@ class OptimizedCLIPClassifier:
 
 
 class OptimizedGPTGenerator:
-    """환경별 최적화된 GPT 보고서 생성기"""
+    """모든 환경에서 동일한 고성능 GPT 보고서 생성기"""
 
     def __init__(self, shared_client=None):
         """공유 OpenAI 클라이언트 사용"""
         self.client = shared_client
-        self.is_deployment = IS_DEPLOYMENT
 
         if self.client:
             logger.info("✅ OpenAI 클라이언트 공유 인스턴스 사용")
@@ -723,16 +730,17 @@ class OptimizedGPTGenerator:
                     )
 
                     self.prompt_template = """
-당신은 건물 피해 분석 전문가입니다. 다음 분석 데이터를 바탕으로 간결한 건물 피해 분석 보고서를 작성해주세요.
+당신은 건물 피해 분석 전문가입니다. 다음 분석 데이터를 바탕으로 상세한 건물 피해 분석 보고서를 작성해주세요.
 
 분석 데이터: {analysis_data}
 
-다음 구조로 보고서를 작성해주세요:
+다음 구조로 상세한 보고서를 작성해주세요:
 1. 피해 현황 요약
-2. 주요 피해 영역 분석
-3. 복구 권고사항
+2. 주요 피해 영역 분석 (각 영역별 상세 설명)
+3. 복구 권고사항 (우선순위 포함)
+4. 안전성 평가
 
-보고서는 전문적이면서도 이해하기 쉽게 작성해주세요.
+보고서는 전문적이면서도 실용적으로 작성해주세요.
 """
 
                     self.prompt = PromptTemplate(
@@ -747,20 +755,20 @@ class OptimizedGPTGenerator:
     def generate_report(
         self, analysis_results: Dict, criteria_data: Dict = None
     ) -> str:
-        """환경별 최적화된 보고서 생성"""
+        """모든 환경에서 동일한 고성능 보고서 생성"""
         try:
             if self.llm and self.prompt:
                 # LangChain 사용 (최신 패턴)
                 formatted_prompt = self.prompt.format(
-                    analysis_data=str(analysis_results)[:2000]  # 토큰 제한
+                    analysis_data=str(analysis_results)[:3000]  # 더 많은 토큰 허용
                 )
                 response = self.llm.invoke(formatted_prompt)
                 return response
 
             elif self.client:
-                # 직접 OpenAI API 사용
+                # 직접 OpenAI API 사용 - 모든 환경에서 동일한 고성능 설정
                 model = "gpt-4o"  # 모든 환경에서 최고 품질 모델
-                max_tokens = 1500  # 모든 환경에서 높은 토큰 제한
+                max_tokens = 2000  # 모든 환경에서 높은 토큰 제한
 
                 messages = [
                     {
@@ -772,7 +780,13 @@ class OptimizedGPTGenerator:
                         "content": f"""
 다음 분석 결과를 바탕으로 상세한 건물 피해 분석 보고서를 작성해주세요:
 
-{str(analysis_results)[:2000]}  # 더 많은 데이터 포함
+{str(analysis_results)[:3000]}
+
+구조:
+1. 피해 현황 요약
+2. 주요 피해 영역 상세 분석
+3. 복구 권고사항 (우선순위 포함)
+4. 안전성 평가
 
 상세하고 전문적인 보고서를 작성해주세요.
 """,
