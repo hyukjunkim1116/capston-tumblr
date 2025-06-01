@@ -66,6 +66,7 @@ def render_simple_chatgpt_ui():
     .main > .block-container {
         max-width: 900px !important;
         margin: 0 auto !important;
+        background-color: #212121 !important;
     }
     
     
