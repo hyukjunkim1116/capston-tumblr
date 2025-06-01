@@ -60,14 +60,8 @@ def render_simple_chatgpt_ui():
     st.markdown(
         """
     <style>
-  
-    
-    .main > .block-container {
-        max-width: 900px !important;
-        margin: 0 auto !important;
-    }
-    
-    
+ 
+
     /* 타이틀 */
     .main-title {
         text-align: center;
