@@ -26,8 +26,6 @@ level = "warning"
 [client]
 showErrorDetails = false
 
-# 메모리 사용량 최적화
+# 메모리 사용량 최적화 (유효한 옵션만)
 [runner]
-magicEnabled = false
-installTracer = false
-fixMatplotlib = false 
+magicEnabled = false 

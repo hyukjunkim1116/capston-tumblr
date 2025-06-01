@@ -16,14 +16,21 @@ import os
 from openai import OpenAI
 from datetime import datetime
 
+# 로거 먼저 정의
+logger = logging.getLogger(__name__)
+
 # YOLOv8 관련
 try:
     from ultralytics import YOLO
 
     YOLO_AVAILABLE = True
-except ImportError:
+    logger.info("YOLOv8 패키지 로드 성공")
+except ImportError as e:
     YOLO_AVAILABLE = False
-    logging.warning("YOLOv8 not available. Install with: pip install ultralytics")
+    logger.warning(f"YOLOv8 not available: {e}. Install with: pip install ultralytics")
+except Exception as e:
+    YOLO_AVAILABLE = False
+    logger.warning(f"YOLOv8 로딩 오류: {e}")
 
 # CLIP 관련
 try:
@@ -39,7 +46,6 @@ except ImportError:
 # LangChain 관련 - 최신 패키지로 업데이트
 try:
     from langchain_openai import OpenAI as LangChainOpenAI
-    from langchain.chains import LLMChain
     from langchain.prompts import PromptTemplate
 
     LANGCHAIN_AVAILABLE = True
@@ -47,7 +53,6 @@ except ImportError:
     try:
         # Fallback to community package
         from langchain_community.llms import OpenAI as LangChainOpenAI
-        from langchain.chains import LLMChain
         from langchain.prompts import PromptTemplate
 
         LANGCHAIN_AVAILABLE = True
@@ -59,8 +64,6 @@ except ImportError:
 
 # 새로운 기준 데이터 매니저 import
 from app.criteria_loader import get_criteria_manager
-
-logger = logging.getLogger(__name__)
 
 # 피해 유형 매핑 (CLIP 분류용)
 DAMAGE_TYPES = [
@@ -739,7 +742,8 @@ class GPTReportGenerator:
 
     def __init__(self):
         self.client = None
-        self.llm_chain = None
+        self.llm = None
+        self.prompt = None
 
         # OpenAI 클라이언트 초기화
         api_key = os.getenv("OPENAI_API_KEY")
@@ -749,9 +753,9 @@ class GPTReportGenerator:
             # LangChain 설정
             if LANGCHAIN_AVAILABLE:
                 try:
-                    llm = LangChainOpenAI(temperature=0.3, openai_api_key=api_key)
+                    self.llm = LangChainOpenAI(temperature=0.3, openai_api_key=api_key)
 
-                    prompt_template = """
+                    self.prompt_template = """
 당신은 건물 피해 분석 전문가입니다. 다음 분석 데이터를 바탕으로 종합적인 건물 피해 분석 보고서를 작성해주세요.
 
 분석 데이터:
@@ -770,26 +774,28 @@ class GPTReportGenerator:
 보고서는 전문적이면서도 이해하기 쉽게 작성해주세요.
 """
 
-                    prompt = PromptTemplate(
+                    self.prompt = PromptTemplate(
                         input_variables=["analysis_data", "criteria_data"],
-                        template=prompt_template,
+                        template=self.prompt_template,
                     )
 
-                    self.llm_chain = LLMChain(llm=llm, prompt=prompt)
                     logger.info("GPT-4 보고서 생성기 초기화 완료")
 
                 except Exception as e:
                     logger.error(f"LangChain 초기화 오류: {e}")
+                    self.llm = None
+                    self.prompt = None
 
     def generate_report(self, analysis_results: Dict, criteria_data: Dict) -> str:
         """분석 결과를 바탕으로 보고서 생성"""
         try:
-            if self.llm_chain:
-                # LangChain 사용
-                response = self.llm_chain.run(
+            if self.llm and self.prompt:
+                # LangChain 사용 (최신 패턴)
+                formatted_prompt = self.prompt.format(
                     analysis_data=str(analysis_results),
                     criteria_data=str(criteria_data),
                 )
+                response = self.llm.invoke(formatted_prompt)
                 return response
 
             elif self.client:

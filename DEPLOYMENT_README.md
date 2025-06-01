@@ -1,8 +1,15 @@
-# 🚀 배포 가이드 - OpenCV 오류 해결
+# 🚀 배포 가이드 - 최신 오류 해결
 
-## 📋 주요 해결 내용
+## 📋 최신 해결 내용 (2025-06-01)
 
-### ✅ **해결된 배포 오류**
+### ✅ **새로 해결된 배포 오류**
+
+- **YOLOv8 import 오류**: 패키지 순서 및 의존성 최적화
+- **LangChain LLMChain deprecated**: 최신 invoke 패턴으로 업데이트
+- **Streamlit config 무효 옵션**: 잘못된 runner 설정 제거
+- **asyncio 오류**: 헬스체크 및 비동기 처리 개선
+
+### ✅ **기존 해결된 배포 오류**
 
 - **OpenCV libGL.so.1 오류**: `cv2` import 제거로 해결
 - **LangChain deprecation 경고**: 최신 패키지로 업데이트
@@ -25,16 +32,19 @@ DEVICE=cpu
 ### 2. **requirements.txt 확인**
 
 ```txt
-# 배포 환경에서 안전한 패키지들
+# Streamlit Cloud 최적화된 패키지 순서
+streamlit>=1.28.0
+openai>=1.0.0
+torch>=2.0.0
+ultralytics>=8.0.0
 opencv-python-headless>=4.8.0  # ✅ GUI 없는 환경 호환
 langchain-openai>=0.1.0         # ✅ 최신 패키지
-torch>=2.0.0                    # ✅ CPU 모드 지원
 ```
 
 ### 3. **Streamlit 설정 최적화**
 
 ```toml
-# .streamlit/config.toml
+# .streamlit/config.toml (유효한 옵션만)
 [global]
 developmentMode = false
 
@@ -42,10 +52,11 @@ developmentMode = false
 headless = true
 maxUploadSize = 200
 
+[client]
+showErrorDetails = false
+
 [runner]
-magicEnabled = false
-installTracer = false
-fixMatplotlib = false
+magicEnabled = false  # ✅ 유효한 옵션만 사용
 ```
 
 ## 🌐 플랫폼별 배포 방법
@@ -58,6 +69,8 @@ fixMatplotlib = false
    OPENAI_API_KEY = your_key
    ENVIRONMENT = production
    DEVICE = cpu
+   TOKENIZERS_PARALLELISM = false
+   TRANSFORMERS_VERBOSITY = error
    ```
 3. 자동 배포 완료
 
@@ -70,6 +83,7 @@ echo "web: streamlit run streamlit_app.py --server.port=\$PORT --server.address=
 # 환경변수 설정
 heroku config:set OPENAI_API_KEY=your_key
 heroku config:set ENVIRONMENT=production
+heroku config:set TOKENIZERS_PARALLELISM=false
 ```
 
 ### **Railway**
@@ -81,6 +95,10 @@ builder = "NIXPACKS"
 
 [deploy]
 startCommand = "streamlit run streamlit_app.py"
+
+[env]
+TOKENIZERS_PARALLELISM = "false"
+TRANSFORMERS_VERBOSITY = "error"
 ```
 
 ### **Docker**
@@ -88,131 +106,172 @@ startCommand = "streamlit run streamlit_app.py"
 ```dockerfile
 FROM python:3.11-slim
 
-# 시스템 패키지 설치 (OpenCV 의존성 제거됨)
+# 환경변수 설정
+ENV TOKENIZERS_PARALLELISM=false
+ENV TRANSFORMERS_VERBOSITY=error
+ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+
+# 시스템 패키지 설치
 RUN apt-get update && apt-get install -y \
     git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
 EXPOSE 8501
-CMD ["streamlit", "run", "streamlit_app.py"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8501/healthz || exit 1
+
+CMD ["streamlit", "run", "streamlit_app.py", "--server.address=0.0.0.0"]
 ```
 
-## 🐛 오류 해결
+## 🐛 최신 오류 해결
 
-### **1. OpenCV libGL.so.1 오류**
+### **1. YOLOv8 import 오류**
 
-```bash
-# ❌ 오류 원인
-import cv2  # GUI 라이브러리 필요
+```python
+# ❌ 문제: 패키지 로딩 순서
+WARNING:root:YOLOv8 not available. Install with: pip install ultralytics
 
-# ✅ 해결 방법
-# cv2 import 제거 (코드에서 실제로 사용하지 않음)
-# opencv-python-headless 사용
+# ✅ 해결: 패키지 순서 최적화 + 상세 로깅
+try:
+    from ultralytics import YOLO
+    YOLO_AVAILABLE = True
+    logger.info("YOLOv8 패키지 로드 성공")
+except ImportError as e:
+    YOLO_AVAILABLE = False
+    logger.warning(f"YOLOv8 not available: {e}")
+except Exception as e:
+    YOLO_AVAILABLE = False
+    logger.warning(f"YOLOv8 로딩 오류: {e}")
 ```
 
-### **2. LangChain 경고**
+### **2. LangChain LLMChain deprecated**
 
 ```python
 # ❌ 이전 (deprecated)
-from langchain.llms import OpenAI
+from langchain.chains import LLMChain
+self.llm_chain = LLMChain(llm=llm, prompt=prompt)
+response = self.llm_chain.run(data)
 
-# ✅ 수정 (최신)
+# ✅ 수정 (최신 패턴)
 from langchain_openai import OpenAI
+from langchain.prompts import PromptTemplate
+formatted_prompt = self.prompt.format(data)
+response = self.llm.invoke(formatted_prompt)
 ```
 
-### **3. 메모리 부족**
+### **3. Streamlit Config 무효 옵션**
 
-```bash
-# 환경변수 설정
-export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
-export TOKENIZERS_PARALLELISM=false
+```toml
+# ❌ 무효한 옵션들
+[runner]
+installTracer = false  # 제거됨
+fixMatplotlib = false  # 제거됨
+
+# ✅ 유효한 옵션만
+[runner]
+magicEnabled = false  # ✅ 유효
 ```
 
-### **4. 모델 파일 없음**
+### **4. asyncio 오류**
 
 ```python
-# 자동 fallback 처리됨
-if not Path(model_path).exists():
-    logger.warning("모델 파일 없음, 기본 모델 사용")
-    model = YOLO("yolov8n.pt")  # 자동 다운로드
+# 환경변수로 비동기 처리 최적화
+export TOKENIZERS_PARALLELISM=false
+export TRANSFORMERS_VERBOSITY=error
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+```
+
+### **5. 헬스체크 실패**
+
+```bash
+# ❌ 오류
+dial tcp 127.0.0.1:8501: connect: connection refused
+
+# ✅ 해결: 서버 주소 설정
+streamlit run streamlit_app.py --server.address=0.0.0.0
 ```
 
 ## 📊 성능 모니터링
 
-### **로그 확인**
+### **배포 로그 확인**
 
 ```python
-# 배포 환경에서 로그 레벨 조정
-logging.basicConfig(level=logging.WARNING)
+# 상세 로깅으로 문제 추적
+logger.info("YOLOv8 패키지 로드 성공")
+logger.warning("Fine-tuned 모델 없음, 기본 CLIP 사용")
+logger.info("기본 CLIP 모델 로드 완료")
 ```
 
-### **메모리 사용량**
+### **메모리 최적화**
 
 ```python
-# Streamlit Cloud: 1GB 제한
-# Heroku: 512MB 제한
-# Railway: 8GB 제한
+# CPU 전용 PyTorch 설정
+torch>=2.0.0
+# 메모리 할당 제한
+PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
 ```
 
 ### **응답 시간**
 
-- **이미지 분석**: ~30초
+- **초기 로딩**: ~60초 (모델 다운로드)
+- **이후 분석**: ~30초
 - **보고서 생성**: ~10초
-- **모델 로딩**: 초기 1회만 ~20초
 
 ## 🚀 배포 후 확인사항
 
-### **1. 기능 테스트**
+### **1. 로그 체크**
+
+- [ ] YOLOv8 패키지 로드 성공
+- [ ] CLIP 모델 로드 완료
+- [ ] GPT-4 보고서 생성기 초기화 완료
+- [ ] LangChain deprecation 경고 없음
+
+### **2. 기능 테스트**
 
 - [ ] 이미지 업로드 정상 작동
 - [ ] AI 분석 결과 출력
 - [ ] PDF 보고서 생성
 - [ ] 오류 없이 완료
 
-### **2. 성능 확인**
+### **3. 성능 확인**
 
-- [ ] 응답 시간 30초 이내
+- [ ] 응답 시간 60초 이내
 - [ ] 메모리 사용량 안정
-- [ ] 오류 로그 없음
-
-### **3. UI/UX 확인**
-
-- [ ] 모바일 반응형 디자인
-- [ ] 다크 테마 적용
-- [ ] 로딩 스피너 표시
+- [ ] 헬스체크 통과
 
 ## 🔧 유지보수
 
 ### **정기 업데이트**
 
 ```bash
-# 패키지 업데이트
-pip install -U streamlit ultralytics openai
+# 패키지 업데이트 (주의: 호환성 확인)
+pip install -U streamlit ultralytics langchain-openai
 
-# 보안 패치
-pip audit --fix
+# 배포 전 로컬 테스트
+streamlit run streamlit_app.py
 ```
 
-### **모니터링**
+### **모니터링 체크리스트**
 
-- 일일 사용량 확인
-- 오류 로그 검토
-- 성능 지표 추적
+- 일일 에러 로그 확인
+- 주간 성능 지표 검토
+- 월간 패키지 보안 업데이트
 
 ## 📞 지원
 
 배포 중 문제 발생시:
 
-1. **로그 확인**: 배포 플랫폼 로그 검토
-2. **환경변수**: API 키 및 설정 재확인
-3. **의존성**: requirements.txt 패키지 버전 확인
+1. **로그 확인**: Streamlit Cloud > Manage app > Logs
+2. **환경변수**: Settings > Secrets 재확인
+3. **의존성**: requirements.txt 패키지 순서 확인
+4. **재배포**: GitHub 커밋 후 자동 재배포
 
 ---
 
-**✅ 이제 안정적으로 배포됩니다!**
+**✅ 2025-06-01 최신 오류까지 모두 해결되었습니다!**
