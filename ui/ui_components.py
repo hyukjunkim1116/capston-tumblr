@@ -6,23 +6,43 @@ from datetime import datetime
 # .env 파일에서 환경변수 로드
 load_dotenv()
 
-# OpenAI API 설정 (캐시된 응답을 위해 유지)
-openai_api_key = os.getenv("OPENAI_API_KEY")
-if openai_api_key:
-    os.environ["OPENAI_API_KEY"] = openai_api_key
-    from openai import OpenAI
+# OpenAI 클라이언트 지연 초기화 (사용할 때만 로드)
+client = None
+openai_available = None
 
-    client = OpenAI()
-else:
-    client = None
+
+def get_openai_client():
+    """OpenAI 클라이언트를 지연 로딩으로 가져오기"""
+    global client, openai_available
+
+    if openai_available is not None:
+        return client, openai_available
+
+    try:
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        if openai_api_key:
+            from openai import OpenAI
+
+            client = OpenAI(api_key=openai_api_key, timeout=30.0, max_retries=2)
+            openai_available = True
+            return client, True
+        else:
+            openai_available = False
+            return None, False
+    except Exception as e:
+        st.error(f"❌ OpenAI 클라이언트 초기화 실패: {str(e)}")
+        openai_available = False
+        return None, False
 
 
 # Performance optimization: Cache API responses
 @st.cache_data(ttl=300)  # Cache for 5 minutes
 def get_openai_response(messages_hash: str, messages: list) -> str:
     """Get cached OpenAI response"""
-    if client is None:
-        return "OpenAI API 키가 설정되지 않았습니다."
+    client, available = get_openai_client()
+
+    if not available or client is None:
+        return "OpenAI API 키가 설정되지 않았거나 클라이언트 초기화에 실패했습니다."
 
     try:
         completion = client.chat.completions.create(
@@ -171,13 +191,19 @@ def render_simple_chatgpt_ui():
                                 "분석 결과는 위의 텍스트 형태로 확인하실 수 있습니다."
                             )
 
+    # 파일 업로드를 위한 별도 컴포넌트
+    uploaded_file = st.file_uploader(
+        "건물 손상 이미지 업로드",
+        type=["jpg", "jpeg", "png", "bmp", "tiff"],
+        help="분석할 건물 손상 이미지를 업로드하세요",
+        disabled=st.session_state.processing,
+        key="image_uploader",
+    )
+
     # st.chat_input을 사용한 메시지 입력 (하단에 자동 고정됨)
     user_input = st.chat_input(
-        placeholder="건물 손상 사진을 업로드하고 분석을 요청하세요...",
+        placeholder="건물 손상에 대한 질문이나 요청사항을 입력하세요...",
         disabled=st.session_state.processing,
-        accept_file=True,
-        file_type=["jpg", "jpeg", "png", "bmp", "tiff"],
-        on_submit=None,  # 콜백 함수는 여기서 직접 처리
         key="main_chat_input",
     )
 
@@ -239,4 +265,4 @@ def render_simple_chatgpt_ui():
         """
         )
 
-    return user_input, area_input
+    return user_input, area_input, uploaded_file

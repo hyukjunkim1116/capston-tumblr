@@ -55,22 +55,13 @@ def main():
     upload_dir, _ = setup_directories()
 
     # Render the simple ChatGPT UI and get user inputs
-    user_input, area_input = render_simple_chatgpt_ui()
+    user_input, area_input, uploaded_file = render_simple_chatgpt_ui()
 
-    # Process the message if user submitted input via chat_input
+    # Process text input
     if user_input:
+        user_message = str(user_input)
 
-        # Extract message and file from user_input (dict-like object)
-        if hasattr(user_input, "text") and hasattr(user_input, "files"):
-            user_message = user_input.text if user_input.text else ""
-            uploaded_files = user_input.files if user_input.files else []
-            uploaded_file = uploaded_files[0] if uploaded_files else None
-        else:
-            # user_input이 문자열인 경우 (파일 없는 경우)
-            user_message = str(user_input)
-            uploaded_file = None
-
-        # 사용자 메시지를 항상 세션에 추가 (파일 여부와 관계없이)
+        # 사용자 메시지를 항상 세션에 추가
         message_data = {
             "role": "user",
             "content": user_message,
@@ -172,7 +163,7 @@ def main():
             text_response = """
 
 **안내**: 더 정확한 건물 피해 분석을 위해서는 피해 사진을 첨부해주세요. 
-파일 첨부 아이콘(📎)을 클릭하거나 이미지를 채팅창에 드래그 앤 드롭하여 업로드할 수 있습니다.
+위의 파일 업로드 버튼을 사용하여 이미지를 업로드할 수 있습니다.
 
 **일반적인 건물 피해 분석 정보**:
 - 구조적 균열: 벽체, 기둥, 보의 균열 확인
@@ -190,6 +181,91 @@ def main():
                 }
             )
             st.rerun()
+
+    # 파일이 업로드된 경우에도 처리
+    elif uploaded_file is not None:
+        # 파일만 업로드된 경우 기본 메시지와 함께 처리
+        user_message = "업로드된 이미지를 분석해주세요."
+
+        message_data = {
+            "role": "user",
+            "content": user_message,
+            "timestamp": datetime.now(),
+            "area": area_input,
+            "image": uploaded_file,
+            "image_size": len(uploaded_file.getvalue()),
+        }
+
+        st.session_state.messages.append(message_data)
+
+        # 파일 검증 및 분석 진행 (위와 동일한 로직)
+        file_valid, file_message = validate_uploaded_file(uploaded_file)
+        if not file_valid:
+            st.error(file_message)
+            return
+
+        content_valid, content_message = validate_image_content(uploaded_file)
+        if not content_valid:
+            st.error(content_message)
+            return
+
+        area_valid, area_message = validate_area_input(area_input)
+        if not area_valid:
+            st.error(area_message)
+            return
+
+        try:
+            with st.spinner("분석 진행 중..."):
+                file_path = save_uploaded_file(
+                    uploaded_file.getvalue(), uploaded_file.name, upload_dir
+                )
+
+                analysis_result = analysis_engine.generate_comprehensive_analysis(
+                    image_path=str(file_path),
+                    area=area_input,
+                    user_message=user_message,
+                )
+
+            if analysis_result["success"]:
+                response_content = analysis_result["analysis_text"]
+
+                pdf_data = {
+                    "analysis_result": analysis_result["analysis_text"],
+                    "image_path": str(file_path),
+                    "area": area_input,
+                    "user_message": user_message,
+                    "damage_areas": analysis_result["damage_areas"],
+                }
+
+                st.session_state.messages.append(
+                    {
+                        "role": "assistant",
+                        "content": response_content,
+                        "timestamp": datetime.now(),
+                        "response_type": "comprehensive",
+                        "pdf_data": pdf_data,
+                    }
+                )
+
+                logger.info("분석 완료")
+            else:
+                error_message = analysis_result.get(
+                    "error", "알 수 없는 오류가 발생했습니다."
+                )
+                st.session_state.messages.append(
+                    {
+                        "role": "assistant",
+                        "content": f"❌ 분석 중 오류가 발생했습니다: {error_message}",
+                        "timestamp": datetime.now(),
+                        "response_type": "error",
+                    }
+                )
+
+            st.rerun()
+
+        except Exception as e:
+            logger.error(f"❌ Error processing file: {e}")
+            st.error(f"파일 처리 중 오류가 발생했습니다: {str(e)}")
 
 
 if __name__ == "__main__":
