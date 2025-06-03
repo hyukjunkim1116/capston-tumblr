@@ -37,9 +37,24 @@ def detect_environment():
 ENVIRONMENT = detect_environment()
 IS_DEPLOYMENT = ENVIRONMENT != "local"
 
+
+# 디바이스 자동 감지 (CUDA 가용성 체크)
+def get_device():
+    """사용 가능한 디바이스 자동 감지"""
+    try:
+        import torch
+
+        if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+            return "cuda"
+        else:
+            return "cpu"
+    except ImportError:
+        return "cpu"
+
+
 # 모든 환경에서 동일한 고성능 설정 사용
 LOG_LEVEL = logging.INFO
-DEVICE = "cuda" if os.getenv("CUDA_VISIBLE_DEVICES") != "none" else "cpu"
+DEVICE = get_device()
 BATCH_SIZE = 4
 MAX_IMAGE_SIZE = 2048
 
@@ -194,7 +209,12 @@ def initialize_optimized_models():
         import clip
         import torch
 
+        # 안전한 디바이스 설정
         device = DEVICE
+        if device == "cuda" and not torch.cuda.is_available():
+            logger.warning("⚠️ CUDA가 요청되었지만 사용할 수 없음, CPU로 fallback")
+            device = "cpu"
+
         clip_model_loaded = False
 
         # 우선순위 순서로 커스텀 CLIP 모델 찾기
@@ -208,6 +228,19 @@ def initialize_optimized_models():
                     break
                 except Exception as e:
                     logger.warning(f"⚠️ CLIP 커스텀 모델 로드 실패 ({model_path}): {e}")
+                    # CUDA 오류인 경우 CPU로 재시도
+                    if "cuda" in str(e).lower() and device == "cuda":
+                        try:
+                            logger.info("🔄 CUDA 오류로 인해 CPU에서 재시도")
+                            model, preprocess = clip.load(str(model_path), device="cpu")
+                            models["clip"] = (model, preprocess)
+                            logger.info(
+                                f"✅ CLIP 커스텀 모델 CPU 로드 완료: {model_path}"
+                            )
+                            clip_model_loaded = True
+                            break
+                        except Exception as cpu_e:
+                            logger.warning(f"⚠️ CPU 재시도도 실패: {cpu_e}")
                     continue
 
         # 배포환경에서 CLIP 커스텀 모델 다운로드 시도
@@ -227,13 +260,44 @@ def initialize_optimized_models():
                         clip_model_loaded = True
                     except Exception as e:
                         logger.warning(f"⚠️ 다운로드된 CLIP 모델 로드 실패: {e}")
+                        # CUDA 오류인 경우 CPU로 재시도
+                        if "cuda" in str(e).lower() and device == "cuda":
+                            try:
+                                logger.info(
+                                    "🔄 다운로드 모델 CUDA 오류로 인해 CPU에서 재시도"
+                                )
+                                model, preprocess = clip.load(
+                                    str(target_path), device="cpu"
+                                )
+                                models["clip"] = (model, preprocess)
+                                logger.info(
+                                    "✅ CLIP 다운로드된 커스텀 모델 CPU 로드 완료"
+                                )
+                                clip_model_loaded = True
+                            except Exception as cpu_e:
+                                logger.warning(
+                                    f"⚠️ 다운로드 모델 CPU 재시도도 실패: {cpu_e}"
+                                )
 
         # 커스텀 CLIP 모델이 없으면 기본 모델 사용 (CLIP은 허용)
         if not clip_model_loaded:
             logger.info("📝 커스텀 CLIP 모델 없음, 기본 ViT-B/32 모델 사용")
-            model, preprocess = clip.load("ViT-B/32", device=device)
-            models["clip"] = (model, preprocess)
-            logger.info("✅ CLIP 기본 모델 로드 완료")
+            try:
+                model, preprocess = clip.load("ViT-B/32", device=device)
+                models["clip"] = (model, preprocess)
+                logger.info(f"✅ CLIP 기본 모델 로드 완료 (device: {device})")
+            except Exception as e:
+                logger.warning(f"⚠️ CLIP 기본 모델 {device} 로드 실패: {e}")
+                # CUDA 오류인 경우 CPU로 재시도
+                if "cuda" in str(e).lower() and device == "cuda":
+                    try:
+                        logger.info("🔄 기본 모델 CUDA 오류로 인해 CPU에서 재시도")
+                        model, preprocess = clip.load("ViT-B/32", device="cpu")
+                        models["clip"] = (model, preprocess)
+                        logger.info("✅ CLIP 기본 모델 CPU 로드 완료")
+                    except Exception as cpu_e:
+                        logger.warning(f"⚠️ 기본 모델 CPU 재시도도 실패: {cpu_e}")
+                        models["clip"] = None
 
     except Exception as e:
         logger.warning(f"⚠️ CLIP 모델 로드 실패: {e}")

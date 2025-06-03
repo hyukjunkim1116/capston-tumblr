@@ -66,8 +66,21 @@ except ImportError:
         LANGCHAIN_AVAILABLE = False
         logger.warning("⚠️ LangChain not available")
 
-# 새로운 기준 데이터 매니저 import
-from app.criteria_loader import get_criteria_manager
+# 새로운 기준 데이터 매니저 import (안전하게 처리)
+try:
+    from app.criteria_loader import get_criteria_manager
+
+    CRITERIA_MANAGER_AVAILABLE = True
+except ImportError:
+    logger.warning(
+        "⚠️ 기준 데이터 매니저를 사용할 수 없습니다. 내장 데이터를 사용합니다."
+    )
+    CRITERIA_MANAGER_AVAILABLE = False
+
+    def get_criteria_manager():
+        """폴백 함수"""
+        return None
+
 
 # 피해 유형 매핑 (CLIP 분류용)
 DAMAGE_TYPES = [
@@ -141,11 +154,10 @@ class AnalysisEngine:
         )
         logger.info("🎯 설정: 모든 환경에서 커스텀 모델 사용 강제")
 
-    @st.cache_data
     def generate_comprehensive_analysis(
         self, image_path: str, area: float, user_message: str = ""
     ) -> Dict[str, Any]:
-        """종합 분석 실행 - 캐싱 적용"""
+        """종합 분석 실행"""
         try:
             logger.info("🔍 종합 분석 시작")
             self.start_time = time.time()
@@ -277,9 +289,11 @@ class AnalysisEngine:
         self, detections: list, classifications: dict, area: float, user_message: str
     ) -> Dict[str, Any]:
         """구조화된 분석 데이터 생성"""
-        from app.criteria_loader import get_criteria_manager
+        if CRITERIA_MANAGER_AVAILABLE:
+            criteria_manager = get_criteria_manager()
+        else:
+            criteria_manager = None
 
-        criteria_manager = get_criteria_manager()
         damage_areas = []
 
         for i, detection in enumerate(detections):
@@ -293,8 +307,11 @@ class AnalysisEngine:
             else:
                 damage_type_kr = self._get_korean_damage_type(damage_type)
 
-            # 기준 데이터에서 상세 정보 조회
-            criteria = criteria_manager.get_damage_assessment_criteria(damage_type)
+            # 기준 데이터에서 상세 정보 조회 (사용 가능한 경우)
+            if criteria_manager:
+                criteria = criteria_manager.get_damage_assessment_criteria(damage_type)
+            else:
+                criteria = self._get_builtin_damage_criteria(damage_type)
 
             # 심각도 계산
             severity_level = min(5, max(1, int(confidence * 5) + 1))
@@ -341,6 +358,51 @@ class AnalysisEngine:
                 ),
             },
         }
+
+    def _get_builtin_damage_criteria(self, damage_type: str) -> Dict[str, Any]:
+        """내장 피해 기준 데이터 반환"""
+        builtin_criteria = {
+            "crack damage": {
+                "severity_levels": {
+                    "1등급": "미세 균열 (0.1mm 미만)",
+                    "2등급": "경미한 균열 (0.1-0.3mm)",
+                    "3등급": "보통 균열 (0.3-1.0mm)",
+                    "4등급": "심각한 균열 (1.0-3.0mm)",
+                    "5등급": "위험 균열 (3.0mm 이상)",
+                }
+            },
+            "water damage": {
+                "severity_levels": {
+                    "1등급": "미세한 습기 흔적",
+                    "2등급": "표면 물 얼룩",
+                    "3등급": "침수 손상",
+                    "4등급": "구조체 수분 침투",
+                    "5등급": "구조 안전성 위험",
+                }
+            },
+            "fire damage": {
+                "severity_levels": {
+                    "1등급": "표면 그을음",
+                    "2등급": "부분 변색",
+                    "3등급": "재료 손상",
+                    "4등급": "구조적 손상",
+                    "5등급": "구조 붕괴 위험",
+                }
+            },
+        }
+
+        # 기본 템플릿
+        default_criteria = {
+            "severity_levels": {
+                "1등급": "경미한 손상",
+                "2등급": "보통 손상",
+                "3등급": "심각한 손상",
+                "4등급": "위험 손상",
+                "5등급": "즉시 조치 필요",
+            }
+        }
+
+        return builtin_criteria.get(damage_type, default_criteria)
 
     def _get_korean_damage_type(self, damage_type: str) -> str:
         """피해 유형 한국어 변환"""
@@ -512,6 +574,17 @@ class OptimizedYOLODetector:
         conf_threshold = 0.3  # 낮은 임계값으로 더 많은 감지
         max_det = 50  # 더 많은 감지 허용
 
+        # 안전한 디바이스 설정
+        device = self.device
+        try:
+            import torch
+
+            if device == "cuda" and not torch.cuda.is_available():
+                logger.warning("⚠️ YOLO: CUDA 요청되었지만 사용 불가, CPU로 fallback")
+                device = "cpu"
+        except ImportError:
+            device = "cpu"
+
         if use_tta:
             # TTA 적용 - 모든 환경에서 활성화
             results_list = []
@@ -522,7 +595,7 @@ class OptimizedYOLODetector:
                     image_path,
                     conf=conf_threshold,
                     max_det=max_det,
-                    device=self.device,
+                    device=device,
                     verbose=False,
                 )
             )
@@ -533,7 +606,7 @@ class OptimizedYOLODetector:
                     image_path,
                     conf=conf_threshold,
                     max_det=max_det,
-                    device=self.device,
+                    device=device,
                     verbose=False,
                     augment=True,
                 )
@@ -555,7 +628,7 @@ class OptimizedYOLODetector:
                 image_path,
                 conf=conf_threshold,
                 max_det=max_det,
-                device=self.device,
+                device=device,
                 verbose=False,
             )
 
@@ -629,10 +702,23 @@ class OptimizedCLIPClassifier:
             return self._fallback_classification()
 
         try:
+            # 안전한 디바이스 설정
+            device = self.device
+            try:
+                import torch
+
+                if device == "cuda" and not torch.cuda.is_available():
+                    logger.warning(
+                        "⚠️ CLIP: CUDA 요청되었지만 사용 불가, CPU로 fallback"
+                    )
+                    device = "cpu"
+            except ImportError:
+                device = "cpu"
+
             # 모든 환경에서 동일한 고해상도 처리
             image_crop = image_crop.resize((224, 224), Image.Resampling.LANCZOS)
 
-            image_input = self.preprocess(image_crop).unsqueeze(0).to(self.device)
+            image_input = self.preprocess(image_crop).unsqueeze(0).to(device)
 
             # 모든 환경에서 전체 피해 유형 분류 (제한 없음)
             damage_types = DAMAGE_TYPES  # 전체 피해 유형 사용
@@ -641,7 +727,7 @@ class OptimizedCLIPClassifier:
                     self._tokenize_with_fallback(f"a photo of {damage_type}")
                     for damage_type in damage_types
                 ]
-            ).to(self.device)
+            ).to(device)
 
             # 추론 실행
             with torch.no_grad():
@@ -885,15 +971,29 @@ def analyze_damage_with_ai(
 
             # 3단계: 새로운 CriteriaDataManager로 기준 데이터 매핑
             logger.info("3단계: 기준 데이터 매핑 시작")
-            criteria_manager = get_criteria_manager()
+
+            if CRITERIA_MANAGER_AVAILABLE:
+                criteria_manager = get_criteria_manager()
+            else:
+                criteria_manager = None
 
             repair_specifications = []
             for damage in classified_damages:
                 if damage["damage_type"] != "normal building":
-                    # 새로운 매니저를 사용하여 상세한 평가 기준 조회
-                    damage_criteria = criteria_manager.get_damage_assessment_criteria(
-                        damage["damage_type"]
-                    )
+                    if criteria_manager:
+                        # 새로운 매니저를 사용하여 상세한 평가 기준 조회
+                        damage_criteria = (
+                            criteria_manager.get_damage_assessment_criteria(
+                                damage["damage_type"]
+                            )
+                        )
+                    else:
+                        # 내장 기준 사용
+                        damage_criteria = {
+                            "damage_type": damage["damage_type"],
+                            "severity_level": "보통",
+                            "description": f"{damage['damage_type_kr']} 피해 감지됨",
+                        }
                     damage_criteria["damage_info"] = damage
                     repair_specifications.append(damage_criteria)
 
@@ -914,11 +1014,30 @@ def analyze_damage_with_ai(
                 "analysis_time": time.time() - start_time,
             }
 
-            # 5단계: 새로운 CriteriaDataManager로 종합 보고서 생성
+            # 5단계: 종합 보고서 생성
             logger.info("5단계: 종합 보고서 생성 시작")
-            final_report = criteria_manager.generate_comprehensive_report(
-                analysis_results
-            )
+
+            if criteria_manager:
+                final_report = criteria_manager.generate_comprehensive_report(
+                    analysis_results
+                )
+            else:
+                # 폴백 보고서 생성
+                final_report = f"""
+# 건물 피해 분석 보고서
+
+## 분석 결과
+- 총 감지 영역: {len(classified_damages)}개
+- 피해 영역: {analysis_results['total_damages']}개
+- 정상 영역: {len(classified_damages) - analysis_results['total_damages']}개
+
+## 주요 피해
+"""
+                for damage in classified_damages:
+                    if damage["damage_type"] != "normal building":
+                        final_report += f"- {damage['damage_type_kr']}: 신뢰도 {damage['confidence']:.2f}\n"
+
+                final_report += "\n*전문가의 상세 검토를 권장합니다.*"
 
             # 시각화 이미지 생성 및 저장
             try:
