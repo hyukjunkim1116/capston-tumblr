@@ -8,8 +8,11 @@ import shutil
 from pathlib import Path
 from ultralytics import YOLO
 import pandas as pd
-from PIL import Image
+from PIL import Image, ImageFile
 import logging
+
+# 손상된 JPEG 파일도 로드 가능하게 설정
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 logger = logging.getLogger(__name__)
 
@@ -73,13 +76,38 @@ class YOLODatasetBuilder:
     def _process_images_and_labels(self, df):
         """이미지와 라벨 처리 - 실제 라벨 데이터 활용"""
         train_split = 0.8
-        image_files = list(self.source_images_dir.glob("*"))
 
-        # 이미지 파일 필터링 (유효한 확장자만)
-        valid_extensions = {".jpg", ".jpeg", ".png", ".webp", ".avif"}
-        image_files = [f for f in image_files if f.suffix.lower() in valid_extensions]
+        # 더 포괄적인 이미지 확장자 지원
+        valid_extensions = {
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp",
+            ".avif",
+            ".bmp",
+            ".tiff",
+            ".tif",
+        }
+        image_files = []
+
+        # 이미지 파일 수집
+        for ext in valid_extensions:
+            image_files.extend(list(self.source_images_dir.glob(f"*{ext}")))
+            image_files.extend(list(self.source_images_dir.glob(f"*{ext.upper()}")))
+
+        # 중복 제거 및 정렬
+        image_files = sorted(
+            list(set(image_files)),
+            key=lambda x: int(x.stem) if x.stem.isdigit() else 999999,
+        )
+
+        logger.info(f"처리할 이미지 파일 수: {len(image_files)}")
 
         train_count = int(len(image_files) * train_split)
+
+        successful_count = 0
+        failed_count = 0
+        corrupted_recovered = 0
 
         for i, image_file in enumerate(image_files):
             try:
@@ -87,31 +115,170 @@ class YOLODatasetBuilder:
                 is_train = i < train_count
                 split_dir = "train" if is_train else "val"
 
-                # 이미지 복사
-                dest_image = (
-                    self.output_dir / split_dir / "images" / f"{image_file.stem}.jpg"
-                )
-                self._copy_and_convert_image(image_file, dest_image)
+                # 이미지 파일명 정리 (숫자만 유지)
+                image_stem = image_file.stem
+                if image_stem.isdigit():
+                    clean_name = image_stem
+                else:
+                    clean_name = f"img_{i:04d}"
 
-                # 실제 라벨 데이터 기반 라벨 생성
-                label_file = (
-                    self.output_dir / split_dir / "labels" / f"{image_file.stem}.txt"
+                # 이미지 복사 및 변환
+                dest_image = (
+                    self.output_dir / split_dir / "images" / f"{clean_name}.jpg"
                 )
-                self._create_accurate_label(label_file, image_file, df)
+
+                conversion_result = self._copy_and_convert_image(image_file, dest_image)
+
+                if conversion_result:
+                    # 라벨 생성
+                    label_file = (
+                        self.output_dir / split_dir / "labels" / f"{clean_name}.txt"
+                    )
+                    self._create_accurate_label(label_file, image_file, df)
+                    successful_count += 1
+
+                    # 손상된 파일에서 복구된 경우 카운트
+                    if (
+                        "corrupt" in str(image_file).lower()
+                        or "damaged" in str(image_file).lower()
+                    ):
+                        corrupted_recovered += 1
+                else:
+                    failed_count += 1
+                    logger.warning(f"이미지 변환 실패: {image_file}")
 
             except Exception as e:
-                logger.warning(f"이미지 처리 실패 {image_file}: {e}")
+                logger.error(f"이미지 처리 실패 {image_file}: {e}")
+                failed_count += 1
+
+        logger.info(
+            f"이미지 처리 완료: 성공 {successful_count}개, 실패 {failed_count}개"
+        )
+        if corrupted_recovered > 0:
+            logger.info(f"손상된 이미지 복구: {corrupted_recovered}개")
 
     def _copy_and_convert_image(self, source, destination):
-        """이미지 복사 및 JPG 변환"""
+        """이미지 복사 및 JPG 변환 - 손상된 JPEG 처리 강화"""
         try:
+            # 이미지 파일 존재 확인
+            if not source.exists():
+                logger.warning(f"이미지 파일이 존재하지 않음: {source}")
+                return False
+
+            # 이미지 열기 및 기본 검증
+            try:
+                with Image.open(source) as img:
+                    # 이미지 기본 정보 확인
+                    if img.size[0] < 10 or img.size[1] < 10:
+                        logger.warning(
+                            f"이미지 크기가 너무 작음: {source} ({img.size})"
+                        )
+                        return False
+
+                    # 실제 이미지 데이터 로드 테스트 (손상 검사)
+                    try:
+                        img.load()
+                        logger.debug(f"이미지 로드 성공: {source}")
+                    except Exception as load_error:
+                        logger.warning(
+                            f"이미지 데이터 손상 감지하지만 계속 진행: {source} - {load_error}"
+                        )
+                        # 손상되었지만 부분적으로 읽기 가능한 경우 계속 진행
+            except Exception as open_error:
+                logger.error(f"이미지 열기 실패: {source} - {open_error}")
+                return False
+
+            # 손상된 이미지도 처리 시도
             with Image.open(source) as img:
-                # RGB 변환 (AVIF, WebP 호환성)
-                if img.mode != "RGB":
-                    img = img.convert("RGB")
-                img.save(destination, "JPEG", quality=90)
+                try:
+                    # EXIF 정보에 따른 회전 처리 (실패해도 무시)
+                    try:
+                        from PIL.ExifTags import ORIENTATION
+
+                        exif = img._getexif()
+                        if exif is not None and ORIENTATION in exif:
+                            orientation = exif[ORIENTATION]
+                            if orientation == 3:
+                                img = img.rotate(180, expand=True)
+                            elif orientation == 6:
+                                img = img.rotate(270, expand=True)
+                            elif orientation == 8:
+                                img = img.rotate(90, expand=True)
+                    except Exception:
+                        pass  # EXIF 처리 실패 시 무시
+
+                    # RGB 변환 (모든 형식 호환성)
+                    if img.mode in ("RGBA", "LA", "P"):
+                        # 투명도가 있는 이미지의 경우 흰색 배경으로 변환
+                        background = Image.new("RGB", img.size, (255, 255, 255))
+                        if img.mode == "P":
+                            img = img.convert("RGBA")
+                        try:
+                            background.paste(
+                                img,
+                                mask=img.split()[-1] if img.mode == "RGBA" else None,
+                            )
+                            img = background
+                        except Exception:
+                            # 투명도 처리 실패 시 단순 변환
+                            img = img.convert("RGB")
+                    elif img.mode != "RGB":
+                        img = img.convert("RGB")
+
+                    # 이미지 크기 제한 (메모리 절약)
+                    max_size = 1920
+                    if max(img.size) > max_size:
+                        img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+
+                    # 디렉토리 생성
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+
+                    # JPG로 저장 - 안전한 설정으로 재압축
+                    img.save(
+                        destination,
+                        "JPEG",
+                        quality=95,
+                        optimize=True,
+                        progressive=True,  # 점진적 JPEG로 저장
+                    )
+
+                    # 저장된 파일 검증
+                    if destination.exists() and destination.stat().st_size > 0:
+                        logger.debug(f"이미지 변환 성공: {source} -> {destination}")
+                        return True
+                    else:
+                        logger.error(f"저장된 파일이 비어있음: {destination}")
+                        return False
+
+                except Exception as process_error:
+                    logger.error(f"이미지 처리 중 오류: {source} - {process_error}")
+                    return False
+
         except Exception as e:
-            logger.error(f"이미지 변환 실패 {source}: {e}")
+            # 구체적인 에러 타입별 로깅
+            error_msg = str(e).lower()
+            if any(
+                keyword in error_msg
+                for keyword in ["corrupt", "truncated", "premature", "jpeg"]
+            ):
+                logger.warning(f"손상된 JPEG 파일이지만 처리 시도: {source} - {e}")
+                # 손상된 파일도 부분적으로 처리 가능할 수 있으므로 재시도
+                try:
+                    with Image.open(source) as img:
+                        img = img.convert("RGB")
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        img.save(destination, "JPEG", quality=85)
+                        if destination.exists():
+                            logger.info(f"손상된 JPEG 복구 성공: {source}")
+                            return True
+                except Exception:
+                    logger.error(f"손상된 JPEG 복구 실패: {source}")
+                    return False
+            else:
+                logger.error(f"이미지 변환 실패: {source} - {e}")
+                return False
+
+        return False
 
     def _create_accurate_label(self, label_file, image_file, df):
         """실제 라벨 데이터 기반 정확한 라벨 생성"""
@@ -278,8 +445,29 @@ class YOLOCustomTrainer:
         """훈련된 모델 저장"""
         if self.model:
             Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-            self.model.save(save_path)
-            logger.info(f"모델 저장: {save_path}")
+
+            # YOLOv8에서는 훈련 완료 시 자동으로 모델이 저장됨
+            # best.pt 파일을 복사하여 커스텀 경로에 저장
+            best_model_path = Path("train/runs/detect/building_damage/weights/best.pt")
+
+            if best_model_path.exists():
+                import shutil
+
+                shutil.copy2(best_model_path, save_path)
+                logger.info(f"모델 저장 완료: {save_path}")
+            else:
+                # 대안: 현재 모델의 가중치 저장
+                try:
+                    import torch
+
+                    torch.save(self.model.model.state_dict(), save_path)
+                    logger.info(f"모델 가중치 저장 완료: {save_path}")
+                except Exception as e:
+                    logger.warning(
+                        f"모델 저장 실패, 하지만 훈련된 모델은 train/runs/detect/building_damage/weights/에 저장되어 있습니다: {e}"
+                    )
+        else:
+            logger.warning("저장할 모델이 없습니다.")
 
 
 def train_custom_yolo():

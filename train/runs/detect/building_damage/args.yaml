@@ -3,8 +3,7 @@ mode: train
 model: train/configs/yolov8n.pt
 data: train/datasets/yolo_dataset/dataset.yaml
 epochs: 30
-time: null
-patience: 100
+patience: 50
 batch: 8
 imgsz: 640
 save: true
@@ -29,7 +28,6 @@ amp: true
 fraction: 1.0
 profile: false
 freeze: null
-multi_scale: false
 overlap_mask: true
 mask_ratio: 4
 dropout: 0.0
@@ -51,7 +49,6 @@ augment: false
 agnostic_nms: false
 classes: null
 retina_masks: false
-embed: null
 show: false
 save_frames: false
 save_txt: false
@@ -66,7 +63,7 @@ keras: false
 optimize: false
 int8: false
 dynamic: false
-simplify: true
+simplify: false
 opset: null
 workspace: 4
 nms: false
@@ -94,14 +91,9 @@ shear: 0.0
 perspective: 0.0
 flipud: 0.0
 fliplr: 0.5
-bgr: 0.0
 mosaic: 1.0
 mixup: 0.0
 copy_paste: 0.0
-copy_paste_mode: flip
-auto_augment: randaugment
-erasing: 0.4
-crop_fraction: 1.0
 cfg: null
 tracker: botsort.yaml
 save_dir: train/runs/detect/building_damage
